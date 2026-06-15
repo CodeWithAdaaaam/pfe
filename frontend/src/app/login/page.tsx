@@ -28,6 +28,12 @@ export default function LoginPage() {
       // SAUVEGARDE DU TOKEN ET DES INFOS
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("userName", data.user.name);
+      localStorage.setItem("userRole", data.user.role);
+      if (data.user.role === "TEACHER" || data.user.role === "ADMIN") {
+        router.push("/teacher");
+      } else {
+        router.push("/");
+      }
       
       router.push("/"); // Redirection vers le dashboard
     } catch (err: any) {
@@ -53,12 +59,12 @@ export default function LoginPage() {
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
             <label className="block text-sm font-semibold mb-2">Email</label>
-            <input type="email" required className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 ring-indigo-500"
+            <input type="email" required className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
               placeholder="adam@supmti.ma" onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
             <label className="block text-sm font-semibold mb-2">Mot de passe</label>
-            <input type="password" required className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 ring-indigo-500"
+            <input type="password" required className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
               placeholder="••••••••" onChange={(e) => setPassword(e.target.value)} />
           </div>
           <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all flex justify-center items-center gap-2">
@@ -67,8 +73,11 @@ export default function LoginPage() {
         </form>
         
         <p className="text-center mt-8 text-sm text-slate-500">
-          Pas encore de compte ? <button className="text-indigo-600 font-bold hover:underline">Inscrivez-vous</button>
-        </p>
+  Pas encore de compte ?{" "}
+  <button onClick={() => router.push("/signup")} className="text-indigo-600 font-bold hover:underline">
+    Inscrivez-vous
+  </button>
+</p>
       </div>
     </div>
   );

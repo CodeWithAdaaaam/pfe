@@ -5,8 +5,7 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from pgvector.sqlalchemy import Vector # L'extension pour le RAG
 import uuid
-from datetime import datetime
-
+from datetime import datetime, timedelta, timezone
 class Base(DeclarativeBase):
     pass
 
@@ -23,7 +22,8 @@ class User(Base):
     # IRT Parameter: theta (la capacité estimée de l'étudiant)
     ability_theta = Column(Float, default=0.0)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 
 # --- TABLES CONTENU & RAG ---
 class Lesson(Base):
@@ -47,7 +47,7 @@ class LessonChunk(Base):
     content = Column(Text) # Le texte du morceau
     
     # Vecteur de 1536 dimensions (taille standard pour OpenAI text-embedding-3-small)
-    embedding = Column(Vector(1536)) 
+    embedding = Column(Vector(384)) 
     
     lesson = relationship("Lesson", back_populates="chunks")
 
@@ -76,4 +76,4 @@ class Attempt(Base):
     question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id"))
     is_correct = Column(Boolean)
     response_time_seconds = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
