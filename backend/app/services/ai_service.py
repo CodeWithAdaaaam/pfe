@@ -1,17 +1,30 @@
 import os
 import json
+import requests
 from dotenv import load_dotenv
 from openai import OpenAI
-from sentence_transformers import SentenceTransformer
 
 load_dotenv()
+
 client = OpenAI(
     api_key=os.getenv("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1"
 )
 
-# Modèle d'embeddings local (gratuit, 384 dimensions)
-_embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+
+
+def create_embeddings(text: str) -> list[float]:
+    response = requests.post(
+        HF_URL,
+        headers={"Authorization": f"Bearer {HF_TOKEN}"},
+        json={"inputs": text}
+    )
+    result = response.json()
+    if isinstance(result, list):
+        return result if isinstance(result[0], float) else result[0]
+    raise ValueError(f"HuggingFace embeddings error: {result}")
 
 
 def generate_course_content(topic: str, level: str) -> str:
@@ -36,7 +49,6 @@ Adapte le vocabulaire et la profondeur au niveau {level}. Réponds uniquement en
 
 
 def reformulate_for_level(content: str, detected_theta: float) -> str:
-    """F1 — Reformule un cours existant selon le niveau IRT détecté de l'étudiant."""
     if detected_theta > 1:
         level_label = "expert — utilise un vocabulaire technique avancé, va droit au but"
     elif detected_theta > 0:
@@ -60,7 +72,6 @@ COURS ORIGINAL :
 
 
 def generate_quiz_questions(topic: str, content: str, count: int = 5) -> list[dict]:
-    """F2 — Génère des QCM avec difficultés IRT variées."""
     prompt = f"""Tu es un expert en évaluation pédagogique. Génère exactement {count} questions QCM basées sur ce cours.
 
 SUJET : {topic}
@@ -76,15 +87,13 @@ Réponds UNIQUEMENT avec un JSON valide, sans markdown :
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=2000,
-        temperature=0.7
+        max_tokens=2000, temperature=0.7
     )
     raw = response.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
     return json.loads(raw)
 
 
 def correct_open_question(question: str, student_answer: str, context: str) -> dict:
-    """F2 — Corrige une question ouverte via LLM. Retourne score, feedback, correct_answer."""
     prompt = f"""Tu es un correcteur pédagogique expert. Évalue la réponse de l'étudiant.
 
 QUESTION : {question}
@@ -110,32 +119,23 @@ score est entre 0.0 et 1.0. is_correct = true si score >= 0.6."""
 
 
 def get_answer_from_context(question: str, context_chunks: list, mode: str = "normal") -> str:
-    """F3 — RAG avec modes : normal, summary, step_by_step, quiz_express."""
     context_text = "\n\n".join([c.content for c in context_chunks])
-
     mode_instructions = {
         "normal": "Réponds à la question de manière claire et précise.",
         "summary": "Fais un résumé synthétique du cours en 5 points clés maximum, sous forme de liste bullet.",
         "step_by_step": "Explique le concept demandé étape par étape, de manière très détaillée avec des exemples à chaque étape.",
         "quiz_express": "Génère 3 questions rapides (QCM) basées sur ce contenu pour tester la compréhension. Format: Q: ... / A: ... B: ... C: ... / Réponse: ..."
     }
-
     instruction = mode_instructions.get(mode, mode_instructions["normal"])
-
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
-            {"role": "system", "content": f"Tu es un tuteur pédagogique. {instruction} Utilise UNIQUEMENT le contexte fourni. Si la réponse n'est pas dans le contexte, dis-le."},
+            {"role": "system", "content": f"Tu es un tuteur pédagogique. {instruction} Utilise UNIQUEMENT le contexte fourni."},
             {"role": "user", "content": f"CONTEXTE :\n{context_text}\n\nDEMANDE : {question}"}
         ],
         max_tokens=800, temperature=0.3
     )
     return response.choices[0].message.content
-
-
-def create_embeddings(text: str) -> list[float]:
-    """Embeddings locaux gratuits (384 dimensions) via sentence-transformers."""
-    return _embedding_model.encode(text).tolist()
 
 
 def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
