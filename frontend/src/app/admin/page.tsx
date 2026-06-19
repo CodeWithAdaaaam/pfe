@@ -8,7 +8,7 @@ import {
   ArrowUpDown, Target
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
 
 const authFetch = (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem("token");
@@ -26,8 +26,8 @@ const thetaPercent = (t: number) => Math.max(0, Math.min(100, Math.round(((t + 3
 
 const NAV = [
   { id: "overview", label: "Vue d'ensemble", Icon: LayoutDashboard },
-  { id: "users",    label: "Utilisateurs",   Icon: Users },
-  { id: "lessons",  label: "Cours",          Icon: BookOpen },
+  { id: "users", label: "Utilisateurs", Icon: Users },
+  { id: "lessons", label: "Cours", Icon: BookOpen },
 ];
 
 interface AppUser {
@@ -46,25 +46,25 @@ interface UserDetail extends AppUser {
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [userName, setUserName]   = useState("");
+  const [userName, setUserName] = useState("");
   const [activeNav, setActiveNav] = useState("overview");
-  const [stats, setStats]         = useState<any>(null);
-  const [users, setUsers]         = useState<AppUser[]>([]);
-  const [lessons, setLessons]     = useState<Lesson[]>([]);
-  const [loading, setLoading]     = useState(true);
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [selectedUser, setSelectedUser]     = useState<UserDetail | null>(null);
-  const [detailLoading, setDetailLoading]   = useState(false);
-  const [editingId, setEditingId]           = useState<string | null>(null);
-  const [editForm, setEditForm]             = useState({ full_name: "", email: "", ability_theta: "", role: "" });
-  const [saving, setSaving]                 = useState(false);
-  const [deleteConfirm, setDeleteConfirm]   = useState<AppUser | Lesson | null>(null);
-  const [deleteType, setDeleteType]         = useState<"user" | "lesson">("user");
-  const [deletingId, setDeletingId]         = useState<string | null>(null);
-  const [showCreate, setShowCreate]         = useState(false);
-  const [createForm, setCreateForm]         = useState({ full_name: "", email: "", password: "", role: "STUDENT" });
-  const [creating, setCreating]             = useState(false);
-  const [sortRole, setSortRole]             = useState<string>("ALL");
+  const [selectedUser, setSelectedUser] = useState<UserDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ full_name: "", email: "", ability_theta: "", role: "" });
+  const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<AppUser | Lesson | null>(null);
+  const [deleteType, setDeleteType] = useState<"user" | "lesson">("user");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ full_name: "", email: "", password: "", role: "STUDENT" });
+  const [creating, setCreating] = useState(false);
+  const [sortRole, setSortRole] = useState<string>("ALL");
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -211,10 +211,10 @@ export default function AdminDashboard() {
               <div className="space-y-6">
                 <div className="grid grid-cols-4 gap-4">
                   {[
-                    { label: "Étudiants",    value: stats.total_students, color: "#0F6E56" },
-                    { label: "Enseignants",  value: stats.total_teachers, color: "#185FA5" },
-                    { label: "Cours",        value: stats.total_lessons,  color: "#534AB7" },
-                    { label: "Tentatives",   value: stats.total_attempts, color: "#854F0B" },
+                    { label: "Étudiants", value: stats.total_students, color: "#0F6E56" },
+                    { label: "Enseignants", value: stats.total_teachers, color: "#185FA5" },
+                    { label: "Cours", value: stats.total_lessons, color: "#534AB7" },
+                    { label: "Tentatives", value: stats.total_attempts, color: "#854F0B" },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="bg-white rounded-2xl border border-slate-100 p-5">
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">{label}</p>

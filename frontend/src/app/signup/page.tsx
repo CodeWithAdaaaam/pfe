@@ -16,7 +16,7 @@ export default function SignupPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/signup", {
+      const res = await fetch("${process.env.NEXT_PUBLIC_API_URL}/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ full_name: fullName, email, password }),
@@ -50,21 +50,21 @@ export default function SignupPage() {
           <div>
             <label className="block text-sm font-semibold mb-2">Nom complet</label>
             <input type="text" required
-            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
               placeholder="Adam Ezziyara"
               onChange={(e) => setFullName(e.target.value)} />
           </div>
           <div>
             <label className="block text-sm font-semibold mb-2">Email</label>
             <input type="email" required
-            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
               placeholder="adam@supmti.ma"
               onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
             <label className="block text-sm font-semibold mb-2">Mot de passe</label>
             <input type="password" required minLength={6}
-            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
               placeholder="••••••••"
               onChange={(e) => setPassword(e.target.value)} />
           </div>

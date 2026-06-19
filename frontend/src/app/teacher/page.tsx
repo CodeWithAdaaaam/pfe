@@ -8,7 +8,7 @@ import {
   ArrowLeft, Target, AlertOctagon
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
 
 const authFetch = (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem("token");
@@ -26,11 +26,11 @@ const thetaPercent = (t: number) =>
   Math.max(0, Math.min(100, Math.round(((t + 3) / 6) * 100)));
 
 const NAV = [
-  { id: "overview",    label: "Vue d'ensemble", Icon: LayoutDashboard },
-  { id: "students",    label: "Étudiants",       Icon: Users           },
-  { id: "heatmap",     label: "Questions",        Icon: BarChart3       },
-  { id: "reco",        label: "Recommandations",  Icon: AlertTriangle   },
-  { id: "progression", label: "Progression",      Icon: TrendingUp      },
+  { id: "overview", label: "Vue d'ensemble", Icon: LayoutDashboard },
+  { id: "students", label: "Étudiants", Icon: Users },
+  { id: "heatmap", label: "Questions", Icon: BarChart3 },
+  { id: "reco", label: "Recommandations", Icon: AlertTriangle },
+  { id: "progression", label: "Progression", Icon: TrendingUp },
 ];
 
 interface Student {
@@ -57,15 +57,15 @@ interface StudentDetail extends Student {
 
 export default function TeacherDashboard() {
   const router = useRouter();
-  const [userName, setUserName]               = useState("");
-  const [stats, setStats]                     = useState<any>(null);
-  const [students, setStudents]               = useState<Student[]>([]);
-  const [heatmap, setHeatmap]                 = useState<any[]>([]);
+  const [userName, setUserName] = useState("");
+  const [stats, setStats] = useState<any>(null);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [heatmap, setHeatmap] = useState<any[]>([]);
   const [recommendations, setRecommendations] = useState<any[]>([]);
-  const [progression, setProgression]         = useState<any[]>([]);
-  const [loading, setLoading]                 = useState(true);
-  const [sortAsc, setSortAsc]                 = useState(false);
-  const [activeNav, setActiveNav]             = useState("overview");
+  const [progression, setProgression] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sortAsc, setSortAsc] = useState(false);
+  const [activeNav, setActiveNav] = useState("overview");
 
   // --- CRUD étudiant ---
   const [selectedStudent, setSelectedStudent] = useState<StudentDetail | null>(null);

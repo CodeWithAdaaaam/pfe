@@ -90,7 +90,7 @@ jobs:
 
       - name: Build
         env:
-          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_API_URL: ${process.env.NEXT_PUBLIC_API_URL}
         run: |
           cd frontend
           npm run build
@@ -9593,7 +9593,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+      const res = await fetch("${process.env.NEXT_PUBLIC_API_URL}/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -9706,7 +9706,7 @@ export default function SignupPage() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/signup", {
+      const res = await fetch("${process.env.NEXT_PUBLIC_API_URL}/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ full_name: fullName, email, password }),
@@ -9789,7 +9789,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
 
 type ChatMode = "normal" | "summary" | "step_by_step" | "quiz_express";
 
@@ -10202,7 +10202,7 @@ import {
   ArrowLeft, Target, AlertOctagon
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
 
 const authFetch = (url: string, options: RequestInit = {}) => {
   const token = localStorage.getItem("token");
