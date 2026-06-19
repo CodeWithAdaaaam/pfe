@@ -108,6 +108,7 @@ export default function Home() {
           body: JSON.stringify({ topic: userMsg, level }),
         });
         const data = await res.json();
+        if (!data.lesson_id) throw new Error("ID leçon manquant");
         await fetchLessons();
         await loadLesson(data.lesson_id);
         setChatHistory(prev => [...prev, { role: "ai", text: `C'est fait ! Module sur **${userMsg}** généré. Posez vos questions !`, isSystem: true }]);

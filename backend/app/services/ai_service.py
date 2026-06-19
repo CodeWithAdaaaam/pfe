@@ -1,6 +1,5 @@
 import os
 import json
-import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -11,21 +10,14 @@ client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-HF_TOKEN = os.getenv("HF_TOKEN")
-HF_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
-
+_embedding_model = None
 
 def create_embeddings(text: str) -> list[float]:
-    response = requests.post(
-        HF_URL,
-        headers={"Authorization": f"Bearer {HF_TOKEN}"},
-        json={"inputs": text}
-    )
-    result = response.json()
-    if isinstance(result, list):
-        return result if isinstance(result[0], float) else result[0]
-    raise ValueError(f"HuggingFace embeddings error: {result}")
-
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    return _embedding_model.encode(text).tolist()
 
 def generate_course_content(topic: str, level: str) -> str:
     prompt = f"""Tu es un professeur expert. Génère un cours complet et structuré en Markdown sur le sujet : "{topic}".
