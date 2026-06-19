@@ -8,15 +8,7 @@ import {
   ArrowUpDown, Target
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
-
-const authFetch = (url: string, options: RequestInit = {}) => {
-  const token = localStorage.getItem("token");
-  return fetch(url, {
-    ...options,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...options.headers },
-  });
-};
+import { API, authFetch } from "@/lib/api";
 
 const roleColor = (role: string) => role === "ADMIN" ? "#534AB7" : role === "TEACHER" ? "#185FA5" : "#0F6E56";
 const roleLabel = (role: string) => role === "ADMIN" ? "Admin" : role === "TEACHER" ? "Enseignant" : "Étudiant";

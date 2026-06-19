@@ -8,15 +8,7 @@ import {
   ArrowLeft, Target, AlertOctagon
 } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "${process.env.NEXT_PUBLIC_API_URL}";
-
-const authFetch = (url: string, options: RequestInit = {}) => {
-  const token = localStorage.getItem("token");
-  return fetch(url, {
-    ...options,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...options.headers }
-  });
-};
+import { API, authFetch } from "@/lib/api";
 
 const thetaLabel = (t: number) =>
   t > 1 ? "Expert" : t > 0 ? "Avancé" : t > -1 ? "Intermédiaire" : "Débutant";
