@@ -1,3 +1,1596 @@
+# learn-ai-pfe context
+
+
+### .github\workflows\ci.yml
+```
+name: LearnAI CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  # â”€â”€â”€ 1. TESTS BACKEND â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  test-backend:
+    name: Backend Tests (FastAPI)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: user_admin
+          POSTGRES_PASSWORD: password_pfe
+          POSTGRES_DB: learnai_db
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://user_admin:password_pfe@localhost:5433/learnai_db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        run: |
+          cd backend
+          pytest app/tests/ -v --tb=short
+
+  # â”€â”€â”€ 2. TESTS FRONTEND â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  test-frontend:
+    name: Frontend Tests (Next.js)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Type check
+        run: |
+          cd frontend
+          npx tsc --noEmit
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000
+        run: |
+          cd frontend
+          npm run build
+
+  # â”€â”€â”€ 3. DEPLOY BACKEND (VPS Hostinger) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  deploy-backend:
+    name: Deploy Backend â†’ VPS
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /var/www/learn-ai
+            git pull origin master
+            cd backend
+            source venv/bin/activate
+            pip install -r requirements.txt
+            alembic upgrade head
+            pm2 restart learnai-backend
+
+  # â”€â”€â”€ 4. DEPLOY FRONTEND (Vercel) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  deploy-frontend:
+    name: Deploy Frontend â†’ Vercel
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: frontend
+          vercel-args: '--prod'
+```
+
+### .vscode\settings.json
+```
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/venv/Scripts/python.exe"
+}
+
+```
+
+### backend\.pytest_cache\README.md
+```
+# pytest cache directory #
+
+This directory contains data from the pytest's cache plugin,
+which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
+
+**Do not** commit this to version control.
+
+See [the docs](https://docs.pytest.org/en/stable/how-to/cache.html) for more information.
+
+```
+
+### backend\alembic.ini
+```
+# A generic, single database configuration.
+
+[alembic]
+# path to migration scripts.
+# this is typically a path given in POSIX (e.g. forward slashes)
+# format, relative to the token %(here)s which refers to the location of this
+# ini file
+script_location = %(here)s/alembic
+
+# template used to generate migration file names; The default value is %%(rev)s_%%(slug)s
+# Uncomment the line below if you want the files to be prepended with date and time
+# see https://alembic.sqlalchemy.org/en/latest/tutorial.html#editing-the-ini-file
+# for all available tokens
+# file_template = %%(year)d_%%(month).2d_%%(day).2d_%%(hour).2d%%(minute).2d-%%(rev)s_%%(slug)s
+# Or organize into date-based subdirectories (requires recursive_version_locations = true)
+# file_template = %%(year)d/%%(month).2d/%%(day).2d_%%(hour).2d%%(minute).2d_%%(second).2d_%%(rev)s_%%(slug)s
+
+# sys.path path, will be prepended to sys.path if present.
+# defaults to the current working directory.  for multiple paths, the path separator
+# is defined by "path_separator" below.
+prepend_sys_path = .
+
+
+# timezone to use when rendering the date within the migration file
+# as well as the filename.
+# If specified, requires the tzdata library which can be installed by adding
+# `alembic[tz]` to the pip requirements.
+# string value is passed to ZoneInfo()
+# leave blank for localtime
+# timezone =
+
+# max length of characters to apply to the "slug" field
+# truncate_slug_length = 40
+
+# set to 'true' to run the environment during
+# the 'revision' command, regardless of autogenerate
+# revision_environment = false
+
+# set to 'true' to allow .pyc and .pyo files without
+# a source .py file to be detected as revisions in the
+# versions/ directory
+# sourceless = false
+
+# version location specification; This defaults
+# to <script_location>/versions.  When using multiple version
+# directories, initial revisions must be specified with --version-path.
+# The path separator used here should be the separator specified by "path_separator"
+# below.
+# version_locations = %(here)s/bar:%(here)s/bat:%(here)s/alembic/versions
+
+# path_separator; This indicates what character is used to split lists of file
+# paths, including version_locations and prepend_sys_path within configparser
+# files such as alembic.ini.
+# The default rendered in new alembic.ini files is "os", which uses os.pathsep
+# to provide os-dependent path splitting.
+#
+# Note that in order to support legacy alembic.ini files, this default does NOT
+# take place if path_separator is not present in alembic.ini.  If this
+# option is omitted entirely, fallback logic is as follows:
+#
+# 1. Parsing of the version_locations option falls back to using the legacy
+#    "version_path_separator" key, which if absent then falls back to the legacy
+#    behavior of splitting on spaces and/or commas.
+# 2. Parsing of the prepend_sys_path option falls back to the legacy
+#    behavior of splitting on spaces, commas, or colons.
+#
+# Valid values for path_separator are:
+#
+# path_separator = :
+# path_separator = ;
+# path_separator = space
+# path_separator = newline
+#
+# Use os.pathsep. Default configuration used for new projects.
+path_separator = os
+
+# set to 'true' to search source files recursively
+# in each "version_locations" directory
+# new in Alembic version 1.10
+# recursive_version_locations = false
+
+# the output encoding used when revision files
+# are written from script.py.mako
+# output_encoding = utf-8
+
+# database URL.  This is consumed by the user-maintained env.py script only.
+# other means of configuring database URLs may be customized within the env.py
+# file.
+sqlalchemy.url = driver://user:pass@localhost/dbname
+
+
+[post_write_hooks]
+# post_write_hooks defines scripts or Python functions that are run
+# on newly generated revision scripts.  See the documentation for further
+# detail and examples
+
+# format using "black" - use the console_scripts runner, against the "black" entrypoint
+# hooks = black
+# black.type = console_scripts
+# black.entrypoint = black
+# black.options = -l 79 REVISION_SCRIPT_FILENAME
+
+# lint with attempts to fix using "ruff" - use the module runner, against the "ruff" module
+# hooks = ruff
+# ruff.type = module
+# ruff.module = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Alternatively, use the exec runner to execute a binary found on your PATH
+# hooks = ruff
+# ruff.type = exec
+# ruff.executable = ruff
+# ruff.options = check --fix REVISION_SCRIPT_FILENAME
+
+# Logging configuration.  This is also consumed by the user-maintained
+# env.py script only.
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARNING
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARNING
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+
+```
+
+### backend\app\core\dependencies.py
+```
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+from ..database.session import SessionLocal  # adapte si ton import diffÃ¨re
+from ..database import models
+from . import security
+
+bearer_scheme = HTTPBearer()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> models.User:
+    token = credentials.credentials
+    payload = security.decode_access_token(token)  # lÃ¨ve HTTPException si invalide
+    
+    user = db.query(models.User).filter(models.User.email == payload.get("sub")).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Utilisateur introuvable")
+    return user
+
+def require_role(*roles: str):
+    """Usage : Depends(require_role('TEACHER', 'ADMIN'))"""
+    def checker(current_user: models.User = Depends(get_current_user)) -> models.User:
+        if current_user.role not in roles:
+            raise HTTPException(status_code=403, detail="AccÃ¨s refusÃ©")
+        return current_user
+    return checker
+```
+
+### backend\app\core\security.py
+```
+import bcrypt
+from datetime import datetime, timedelta, timezone
+from jose import jwt, JWTError
+from fastapi import HTTPException
+
+import os
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback_dev_only")
+ALGORITHM = "HS256"
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    to_encode.update({"exp": datetime.now(timezone.utc) + timedelta(minutes=60)})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token invalide ou expirÃ©")
+```
+
+### backend\app\database\models.py
+```
+# -*- coding: utf-8 -*-
+from sqlalchemy import Column, String, Float, Boolean, ForeignKey, Text, DateTime, JSON
+
+from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.dialects.postgresql import UUID
+from pgvector.sqlalchemy import Vector # L'extension pour le RAG
+import uuid
+from datetime import datetime, timedelta, timezone
+class Base(DeclarativeBase):
+    pass
+
+# --- TABLE UTILISATEUR ---
+class User(Base):
+    __tablename__ = "users"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String, unique=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    full_name = Column(String)
+    role = Column(String, default="STUDENT") # STUDENT, TEACHER, ADMIN
+    
+    # IRT Parameter: theta (la capacitÃ© estimÃ©e de l'Ã©tudiant)
+    ability_theta = Column(Float, default=0.0)
+    
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+# --- TABLES CONTENU & RAG ---
+class Lesson(Base):
+    __tablename__ = "lessons"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String, nullable=False)
+    content = Column(Text) # Le cours complet en Markdown
+    difficulty_level = Column(String) # BEGINNER, INTERMEDIATE, ADVANCED
+    
+    # RAG chunks relationship
+    chunks = relationship("LessonChunk", back_populates="lesson")
+    questions = relationship("Question", back_populates="lesson")
+
+class LessonChunk(Base):
+    """Pour la recherche vectorielle (RAG)"""
+    __tablename__ = "lesson_chunks"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lesson_id = Column(UUID(as_uuid=True), ForeignKey("lessons.id"))
+    content = Column(Text) # Le texte du morceau
+    
+    # Vecteur de 1536 dimensions (taille standard pour OpenAI text-embedding-3-small)
+    embedding = Column(Vector(384)) 
+    
+    lesson = relationship("Lesson", back_populates="chunks")
+
+# --- TABLES QUIZ & IRT ---
+class Question(Base):
+    __tablename__ = "questions"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lesson_id = Column(UUID(as_uuid=True), ForeignKey("lessons.id"))
+    text = Column(Text, nullable=False)
+    options = Column(JSON) # ["A", "B", "C", "D"]
+    correct_answer = Column(String)
+    
+    # ParamÃ¨tres IRT (Item Response Theory)
+    difficulty_b = Column(Float, default=0.0) # b = difficultÃ© de l'item
+    discrimination_a = Column(Float, default=1.0) # a = discrimination
+    
+    lesson = relationship("Lesson", back_populates="questions")
+
+class Attempt(Base):
+    """Enregistre chaque rÃ©ponse pour les analytics et l'Ã©volution de l'IRT"""
+    __tablename__ = "attempts"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id"))
+    is_correct = Column(Boolean)
+    response_time_seconds = Column(Float)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+```
+
+### backend\app\database\session.py
+```
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from .models import Base
+import os
+
+# Configuration de la base de donnÃ©es
+DATABASE_URL = "postgresql://postgres.xtdbsxfptsgnlgmmijxl:tyyarazwina@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+
+# 1. CrÃ©ation de l'engine
+engine = create_engine(DATABASE_URL)
+
+# 2. CrÃ©ation de la SessionLocal (C'est ce qui manquait !)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def init_db():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            conn.commit()
+        Base.metadata.create_all(bind=engine)
+        print("âœ… Base de donnÃ©es prÃªte.")
+    except Exception as e:
+        print(f"âŒ Erreur : {e}")
+
+if __name__ == "__main__":
+    init_db()
+```
+
+### backend\app\main.py
+```
+from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from reportlab.pdfgen import canvas
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import io
+
+from .database.session import SessionLocal, init_db
+from .database import models
+from .services import ai_service, quiz_service, chat_service
+from .core import security
+from .core.dependencies import get_db, get_current_user, require_role
+from .routers import teacher
+
+# --- APP ---
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="LearnAI API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+init_db()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(teacher.router)
+
+# --- SCHÃ‰MAS ---
+class CourseRequest(BaseModel):
+    topic: str
+    level: str
+
+class ChatRequest(BaseModel):
+    lesson_id: str
+    question: str
+    session_id: str
+
+class UserSignup(BaseModel):
+    email: str
+    password: str
+    full_name: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class QuizSubmit(BaseModel):
+    question_id: str
+    answer: str
+class OpenQuestionSubmit(BaseModel):
+    question_id: str
+    answer: str  # rÃ©ponse ouverte de l'Ã©tudiant
+ 
+class ChatRequestWithMode(BaseModel):
+    lesson_id: str
+    question: str
+    session_id: str
+    mode: str = "normal"  # normal | summary | step_by_step | quiz_express
+ 
+class ReformulateRequest(BaseModel):
+    lesson_id: str
+# --- AUTH (public) ---
+
+@app.post("/auth/signup")
+def signup(user_data: UserSignup, db: Session = Depends(get_db)):
+    if db.query(models.User).filter(models.User.email == user_data.email).first():
+        raise HTTPException(status_code=400, detail="Cet email est dÃ©jÃ  utilisÃ©.")
+    db.add(models.User(
+        email=user_data.email,
+        hashed_password=security.hash_password(user_data.password),
+        full_name=user_data.full_name,
+        role="STUDENT"
+    ))
+    db.commit()
+    return {"status": "success", "message": "Compte crÃ©Ã© !"}
+
+@app.post("/auth/login")
+def login(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == credentials.email).first()
+    if not user or not security.verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect.")
+    token = security.create_access_token(data={"sub": user.email, "role": user.role})
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"name": user.full_name, "email": user.email, "role": user.role}
+    }
+
+# --- COURS ---
+
+@app.post("/generate-course")
+@limiter.limit("5/minute")
+def create_course(
+    request: Request,
+    body: CourseRequest,
+    current_user: models.User = Depends(require_role("STUDENT", "TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    try:
+        content = ai_service.generate_course_content(body.topic, body.level)
+        new_lesson = models.Lesson(title=body.topic, content=content, difficulty_level=body.level)
+        db.add(new_lesson)
+        db.commit()
+        db.refresh(new_lesson)
+
+        for chunk_text in ai_service.chunk_text(content):
+            db.add(models.LessonChunk(
+                lesson_id=new_lesson.id,
+                content=chunk_text,
+                embedding=ai_service.create_embeddings(chunk_text)
+            ))
+
+        questions = ai_service.generate_quiz_questions(body.topic, content, count=5)
+        for q in questions:
+            db.add(models.Question(
+                lesson_id=new_lesson.id,
+                text=q["text"],
+                options=q["options"],
+                correct_answer=q["correct_answer"],
+                difficulty_b=q["difficulty_b"]
+            ))
+
+        db.commit()
+        return {"status": "success", "lesson_id": str(new_lesson.id)}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()  # â† ajoute cette ligne
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/lessons")
+def list_lessons(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    lessons = db.query(models.Lesson.id, models.Lesson.title).all()
+    return [{"id": str(l.id), "title": l.title} for l in lessons]
+
+@app.get("/lessons/{lesson_id}")
+def get_lesson(
+    lesson_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="LeÃ§on non trouvÃ©e")
+    return lesson
+
+@app.get("/lessons/{lesson_id}/pdf")
+def export_lesson_pdf(
+    lesson_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="LeÃ§on non trouvÃ©e")
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer)
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(100, 800, f"Cours : {lesson.title}")
+    p.setFont("Helvetica", 12)
+    y = 750
+    for line in lesson.content.split('\n'):
+        p.drawString(100, y, line[:80])
+        y -= 20
+        if y < 50:
+            p.showPage()
+            y = 800
+    p.save()
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={lesson.title}.pdf"})
+
+# --- CHATBOT ---
+
+@app.post("/chat")
+@limiter.limit("20/minute")
+def chat_with_course(
+    request: Request,
+    body: ChatRequestWithMode,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    question_vector = ai_service.create_embeddings(body.question)
+    results = db.query(models.LessonChunk).filter(
+        models.LessonChunk.lesson_id == body.lesson_id
+    ).order_by(
+        models.LessonChunk.embedding.l2_distance(question_vector)
+    ).limit(3).all()
+ 
+    answer = chat_service.chat_with_memory(
+        session_id=body.session_id,
+        question=body.question,
+        context_chunks=results,
+        mode=body.mode
+    )
+    return {"answer": answer, "mode": body.mode}
+
+@app.delete("/chat/session/{session_id}")
+def clear_chat_session(
+    session_id: str,
+    current_user: models.User = Depends(get_current_user)
+):
+    chat_service.delete_session(session_id)
+    return {"status": "session effacÃ©e"}
+
+# --- QUIZ ---
+
+@app.get("/quiz/next/{lesson_id}")
+def get_next_question(
+    lesson_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    questions = db.query(models.Question).filter(models.Question.lesson_id == lesson_id).all()
+    next_q = quiz_service.select_next_question(questions, current_user.ability_theta)
+    if not next_q:
+        raise HTTPException(status_code=404, detail="Plus de questions disponibles")
+    return {"id": str(next_q.id), "text": next_q.text, "options": next_q.options, "difficulty_b": next_q.difficulty_b}
+
+@app.post("/quiz/submit")
+def submit_answer(
+    data: QuizSubmit,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    question = db.query(models.Question).filter(models.Question.id == data.question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question introuvable")
+    is_correct = (data.answer == question.correct_answer)
+    current_user.ability_theta = quiz_service.update_student_theta(
+        current_user.ability_theta, question.difficulty_b, is_correct
+    )
+    db.add(models.Attempt(user_id=current_user.id, question_id=question.id, is_correct=is_correct))
+    db.commit()
+    return {
+        "is_correct": is_correct,
+        "new_theta": current_user.ability_theta,
+        "feedback": "Excellent ! Ton niveau progresse." if is_correct else f"Dommage. La bonne rÃ©ponse Ã©tait : {question.correct_answer}"
+    }
+
+# --- ANALYTICS ---
+
+@app.post("/quiz/submit-open")
+@limiter.limit("10/minute")
+def submit_open_answer(
+    request: Request,
+    data: OpenQuestionSubmit,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    question = db.query(models.Question).filter(models.Question.id == data.question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question introuvable")
+ 
+    # RÃ©cupÃ©rer le contenu du cours pour contexte
+    lesson = db.query(models.Lesson).filter(models.Lesson.id == question.lesson_id).first()
+    context = lesson.content if lesson else ""
+ 
+    result = ai_service.correct_open_question(question.text, data.answer, context)
+ 
+    # Mise Ã  jour IRT basÃ©e sur le score
+    is_correct = result.get("is_correct", False)
+    current_user.ability_theta = quiz_service.update_student_theta(
+        current_user.ability_theta, question.difficulty_b, is_correct
+    )
+    db.add(models.Attempt(user_id=current_user.id, question_id=question.id, is_correct=is_correct))
+    db.commit()
+ 
+    return {
+        "score": result.get("score", 0),
+        "is_correct": is_correct,
+        "feedback": result.get("feedback", ""),
+        "correct_answer": result.get("correct_answer", ""),
+        "new_theta": current_user.ability_theta
+    }
+
+@app.get("/stats")
+def get_user_stats(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    total = db.query(models.Attempt).filter(models.Attempt.user_id == current_user.id).count()
+    correct = db.query(models.Attempt).filter(
+        models.Attempt.user_id == current_user.id,
+        models.Attempt.is_correct == True
+    ).count()
+    progress = max(0, min(100, int(((current_user.ability_theta + 3) / 6) * 100)))
+    return {
+        "theta": current_user.ability_theta,
+        "progress_percent": progress,
+        "total_attempts": total,
+        "success_rate": round(correct / total * 100, 1) if total > 0 else 0
+    }
+
+@app.post("/lessons/{lesson_id}/reformulate")
+def reformulate_lesson(
+    lesson_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
+    if not lesson:
+        raise HTTPException(status_code=404, detail="LeÃ§on non trouvÃ©e")
+    reformulated = ai_service.reformulate_for_level(lesson.content, current_user.ability_theta)
+    return {"content": reformulated, "theta_used": current_user.ability_theta}
+ 
+```
+
+### backend\app\routers\teacher.py
+```
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func, cast, Date
+from datetime import datetime, timedelta
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+
+from ..database import models
+from ..core.dependencies import get_db, require_role
+
+router = APIRouter(prefix="/teacher", tags=["teacher"])
+
+
+@router.get("/stats")
+def get_teacher_stats(
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    total_students = db.query(models.User).filter(models.User.role == "STUDENT").count()
+    avg_theta = db.query(func.avg(models.User.ability_theta)).filter(models.User.role == "STUDENT").scalar() or 0
+    popular_lessons = db.query(
+        models.Lesson.title,
+        func.count(models.Attempt.id).label("attempts")
+    ).join(models.Question, models.Question.lesson_id == models.Lesson.id
+    ).join(models.Attempt, models.Attempt.question_id == models.Question.id
+    ).group_by(models.Lesson.id).order_by(func.count(models.Attempt.id).desc()).limit(5).all()
+
+    return {
+        "total_students": total_students,
+        "average_theta": round(float(avg_theta), 2),
+        "popular_lessons": [{"title": l.title, "attempts": l.attempts} for l in popular_lessons]
+    }
+
+
+@router.get("/students")
+def get_students_list(
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    students = db.query(models.User).filter(models.User.role == "STUDENT").all()
+    result = []
+    for s in students:
+        total = db.query(models.Attempt).filter(models.Attempt.user_id == s.id).count()
+        correct = db.query(models.Attempt).filter(
+            models.Attempt.user_id == s.id,
+            models.Attempt.is_correct == True
+        ).count()
+        progress = max(0, min(100, int(((s.ability_theta + 3) / 6) * 100)))
+        result.append({
+            "id": str(s.id),
+            "name": s.full_name,
+            "email": s.email,
+            "theta": round(s.ability_theta, 2),
+            "progress_percent": progress,
+            "total_attempts": total,
+            "success_rate": round(correct / total * 100, 1) if total > 0 else 0,
+        })
+    return sorted(result, key=lambda x: x["theta"], reverse=True)
+
+
+# --- CRUD Ã‰TUDIANT ---
+
+class StudentUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    ability_theta: Optional[float] = None
+
+
+@router.get("/students/{student_id}")
+def get_student_detail(
+    student_id: str,
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    student = db.query(models.User).filter(
+        models.User.id == student_id,
+        models.User.role == "STUDENT"
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Ã‰tudiant non trouvÃ©")
+
+    total = db.query(models.Attempt).filter(models.Attempt.user_id == student.id).count()
+    correct = db.query(models.Attempt).filter(
+        models.Attempt.user_id == student.id,
+        models.Attempt.is_correct == True
+    ).count()
+    progress = max(0, min(100, int(((student.ability_theta + 3) / 6) * 100)))
+
+    attempts = db.query(models.Attempt).filter(
+        models.Attempt.user_id == student.id
+    ).order_by(models.Attempt.timestamp.desc()).limit(50).all()
+
+    attempts_detail = []
+    for a in attempts:
+        question = db.query(models.Question).filter(models.Question.id == a.question_id).first()
+        lesson = db.query(models.Lesson).filter(models.Lesson.id == question.lesson_id).first() if question else None
+        attempts_detail.append({
+            "id": str(a.id),
+            "question_text": question.text[:100] if question else "â€”",
+            "lesson_title": lesson.title if lesson else "â€”",
+            "is_correct": a.is_correct,
+            "timestamp": a.timestamp.isoformat() if a.timestamp else None,
+        })
+
+    return {
+        "id": str(student.id),
+        "name": student.full_name,
+        "email": student.email,
+        "theta": round(student.ability_theta, 2),
+        "progress_percent": progress,
+        "total_attempts": total,
+        "success_rate": round(correct / total * 100, 1) if total > 0 else 0,
+        "attempts": attempts_detail,
+    }
+
+
+@router.patch("/students/{student_id}")
+def update_student(
+    student_id: str,
+    data: StudentUpdate,
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    student = db.query(models.User).filter(
+        models.User.id == student_id,
+        models.User.role == "STUDENT"
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Ã‰tudiant non trouvÃ©")
+
+    if data.email is not None and data.email != student.email:
+        existing = db.query(models.User).filter(models.User.email == data.email).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Cet email est dÃ©jÃ  utilisÃ©.")
+        student.email = data.email
+
+    if data.full_name is not None:
+        student.full_name = data.full_name
+
+    if data.ability_theta is not None:
+        student.ability_theta = data.ability_theta
+
+    db.commit()
+    db.refresh(student)
+
+    return {
+        "id": str(student.id),
+        "name": student.full_name,
+        "email": student.email,
+        "theta": round(student.ability_theta, 2),
+    }
+
+
+@router.delete("/students/{student_id}")
+def delete_student(
+    student_id: str,
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    student = db.query(models.User).filter(
+        models.User.id == student_id,
+        models.User.role == "STUDENT"
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Ã‰tudiant non trouvÃ©")
+
+    # Cascade : supprimer les tentatives liÃ©es
+    db.query(models.Attempt).filter(models.Attempt.user_id == student.id).delete()
+    db.delete(student)
+    db.commit()
+
+    return {"status": "success", "message": "Ã‰tudiant supprimÃ©"}
+
+
+@router.get("/heatmap")
+def get_questions_heatmap(
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    questions = db.query(models.Question).all()
+    result = []
+    for q in questions:
+        total = db.query(models.Attempt).filter(models.Attempt.question_id == q.id).count()
+        wrong = db.query(models.Attempt).filter(
+            models.Attempt.question_id == q.id,
+            models.Attempt.is_correct == False
+        ).count()
+        if total == 0:
+            continue
+        # RÃ©cupÃ©rer le titre du cours associÃ©
+        lesson = db.query(models.Lesson).filter(models.Lesson.id == q.lesson_id).first()
+        result.append({
+            "question_id": str(q.id),
+            "question_text": q.text[:80] + "..." if len(q.text) > 80 else q.text,
+            "lesson_title": lesson.title if lesson else "â€”",
+            "difficulty_b": q.difficulty_b,
+            "total_attempts": total,
+            "failure_rate": round(wrong / total * 100, 1),
+        })
+    return sorted(result, key=lambda x: x["failure_rate"], reverse=True)[:20]
+
+
+@router.get("/recommendations")
+def get_recommendations(
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    from sqlalchemy import case
+    lessons = db.query(
+        models.Lesson.id,
+        models.Lesson.title,
+        func.count(models.Attempt.id).label("total"),
+        func.sum(case((models.Attempt.is_correct == False, 1), else_=0)).label("wrong")
+    ).join(models.Question, models.Question.lesson_id == models.Lesson.id
+    ).join(models.Attempt, models.Attempt.question_id == models.Question.id
+    ).group_by(models.Lesson.id).all()
+
+    result = []
+    for l in lessons:
+        total = l.total or 0
+        wrong = l.wrong or 0
+        if total == 0:
+            continue
+        failure_rate = round(wrong / total * 100, 1)
+        result.append({
+            "lesson_id": str(l.id),
+            "lesson_title": l.title,
+            "total_attempts": total,
+            "failure_rate": failure_rate,
+            "recommendation": (
+                "ðŸ”´ Revoir en cours â€” taux d'Ã©chec trÃ¨s Ã©levÃ©" if failure_rate > 60 else
+                "ðŸŸ¡ Ã€ surveiller â€” quelques difficultÃ©s dÃ©tectÃ©es" if failure_rate > 35 else
+                "ðŸŸ¢ Bonne maÃ®trise â€” continuer ainsi"
+            )
+        })
+    return sorted(result, key=lambda x: x["failure_rate"], reverse=True)
+
+@router.get("/progression")
+def get_class_progression(
+    current_user: models.User = Depends(require_role("TEACHER", "ADMIN")),
+    db: Session = Depends(get_db)
+):
+    # Ã‰volution du theta moyen par jour sur les 14 derniers jours
+    since = datetime.utcnow() - timedelta(days=14)
+
+    rows = db.query(
+        cast(models.Attempt.timestamp, Date).label("day"),
+        func.avg(models.User.ability_theta).label("avg_theta"),
+        func.count(models.Attempt.id).label("attempts")
+    ).join(models.User, models.User.id == models.Attempt.user_id
+    ).filter(models.Attempt.timestamp >= since
+    ).group_by(cast(models.Attempt.timestamp, Date)
+    ).order_by(cast(models.Attempt.timestamp, Date)).all()
+
+    return [
+        {
+            "date": str(row.day),
+            "avg_theta": round(float(row.avg_theta), 2),
+            "attempts": row.attempts,
+            "progress_percent": max(0, min(100, int(((float(row.avg_theta) + 3) / 6) * 100)))
+        }
+        for row in rows
+    ]
+```
+
+### backend\app\services\ai_service.py
+```
+import os
+import json
+from dotenv import load_dotenv
+from openai import OpenAI
+from sentence_transformers import SentenceTransformer
+
+load_dotenv()
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
+
+# ModÃ¨le d'embeddings local (gratuit, 384 dimensions)
+_embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+
+def generate_course_content(topic: str, level: str) -> str:
+    prompt = f"""Tu es un professeur expert. GÃ©nÃ¨re un cours complet et structurÃ© en Markdown sur le sujet : "{topic}".
+Niveau cible : {level} (BEGINNER = dÃ©butant, INTERMEDIATE = intermÃ©diaire, ADVANCED = avancÃ©).
+
+Structure obligatoire :
+# Titre du cours
+## Introduction
+## Concepts clÃ©s (avec exemples concrets)
+## Approfondissement
+## RÃ©sumÃ©
+## Points Ã  retenir (liste bullet)
+
+Adapte le vocabulaire et la profondeur au niveau {level}. RÃ©ponds uniquement en Markdown."""
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000, temperature=0.7
+    )
+    return response.choices[0].message.content
+
+
+def reformulate_for_level(content: str, detected_theta: float) -> str:
+    """F1 â€” Reformule un cours existant selon le niveau IRT dÃ©tectÃ© de l'Ã©tudiant."""
+    if detected_theta > 1:
+        level_label = "expert â€” utilise un vocabulaire technique avancÃ©, va droit au but"
+    elif detected_theta > 0:
+        level_label = "intermÃ©diaire â€” explique les concepts sans trop simplifier"
+    elif detected_theta > -1:
+        level_label = "dÃ©butant â€” explique simplement avec des analogies et exemples concrets"
+    else:
+        level_label = "grand dÃ©butant â€” vulgarise au maximum, Ã©vite tout jargon"
+
+    prompt = f"""Tu es un professeur. Reformule ce cours pour un Ã©tudiant de niveau {level_label}.
+Garde la mÃªme structure Markdown mais adapte le vocabulaire, la profondeur et les exemples.
+
+COURS ORIGINAL :
+{content[:3000]}"""
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000, temperature=0.5
+    )
+    return response.choices[0].message.content
+
+
+def generate_quiz_questions(topic: str, content: str, count: int = 5) -> list[dict]:
+    """F2 â€” GÃ©nÃ¨re des QCM avec difficultÃ©s IRT variÃ©es."""
+    prompt = f"""Tu es un expert en Ã©valuation pÃ©dagogique. GÃ©nÃ¨re exactement {count} questions QCM basÃ©es sur ce cours.
+
+SUJET : {topic}
+CONTENU : {content[:3000]}
+
+GÃ©nÃ¨re des questions de difficultÃ©s variÃ©es :
+- 2 questions faciles (difficulty_b: -1.0)
+- 2 questions moyennes (difficulty_b: 0.0)
+- 1 question difficile (difficulty_b: 1.5)
+
+RÃ©ponds UNIQUEMENT avec un JSON valide, sans markdown :
+[{{"text": "?", "options": ["A","B","C","D"], "correct_answer": "A", "difficulty_b": -1.0}}]"""
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=2000,
+        temperature=0.7
+    )
+    raw = response.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
+    return json.loads(raw)
+
+
+def correct_open_question(question: str, student_answer: str, context: str) -> dict:
+    """F2 â€” Corrige une question ouverte via LLM. Retourne score, feedback, correct_answer."""
+    prompt = f"""Tu es un correcteur pÃ©dagogique expert. Ã‰value la rÃ©ponse de l'Ã©tudiant.
+
+QUESTION : {question}
+RÃ‰PONSE DE L'Ã‰TUDIANT : {student_answer}
+CONTENU DU COURS (rÃ©fÃ©rence) : {context[:2000]}
+
+RÃ©ponds UNIQUEMENT en JSON valide :
+{{
+  "score": 0.8,
+  "is_correct": true,
+  "feedback": "Explication dÃ©taillÃ©e...",
+  "correct_answer": "La rÃ©ponse idÃ©ale complÃ¨te..."
+}}
+
+score est entre 0.0 et 1.0. is_correct = true si score >= 0.6."""
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=600, temperature=0.2
+    )
+    raw = response.choices[0].message.content.strip().replace("```json","").replace("```","").strip()
+    return json.loads(raw)
+
+
+def get_answer_from_context(question: str, context_chunks: list, mode: str = "normal") -> str:
+    """F3 â€” RAG avec modes : normal, summary, step_by_step, quiz_express."""
+    context_text = "\n\n".join([c.content for c in context_chunks])
+
+    mode_instructions = {
+        "normal": "RÃ©ponds Ã  la question de maniÃ¨re claire et prÃ©cise.",
+        "summary": "Fais un rÃ©sumÃ© synthÃ©tique du cours en 5 points clÃ©s maximum, sous forme de liste bullet.",
+        "step_by_step": "Explique le concept demandÃ© Ã©tape par Ã©tape, de maniÃ¨re trÃ¨s dÃ©taillÃ©e avec des exemples Ã  chaque Ã©tape.",
+        "quiz_express": "GÃ©nÃ¨re 3 questions rapides (QCM) basÃ©es sur ce contenu pour tester la comprÃ©hension. Format: Q: ... / A: ... B: ... C: ... / RÃ©ponse: ..."
+    }
+
+    instruction = mode_instructions.get(mode, mode_instructions["normal"])
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": f"Tu es un tuteur pÃ©dagogique. {instruction} Utilise UNIQUEMENT le contexte fourni. Si la rÃ©ponse n'est pas dans le contexte, dis-le."},
+            {"role": "user", "content": f"CONTEXTE :\n{context_text}\n\nDEMANDE : {question}"}
+        ],
+        max_tokens=800, temperature=0.3
+    )
+    return response.choices[0].message.content
+
+
+def create_embeddings(text: str) -> list[float]:
+    """Embeddings locaux gratuits (384 dimensions) via sentence-transformers."""
+    return _embedding_model.encode(text).tolist()
+
+
+def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
+    chunks, overlap, i = [], 50, 0
+    while i < len(text):
+        chunks.append(text[i:i + chunk_size])
+        i += chunk_size - overlap
+    return chunks
+```
+
+### backend\app\services\chat_service.py
+```
+import json
+import os
+import redis
+from dotenv import load_dotenv
+
+from openai import OpenAI
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
+load_dotenv()
+
+r = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", 6379)),
+    decode_responses=True
+)
+
+SESSION_TTL = 60 * 60 * 24  # 24h
+
+
+def get_session_history(session_id: str) -> list[dict]:
+    try:
+        data = r.get(f"chat:{session_id}")
+        return json.loads(data) if data else []
+    except Exception:
+        return []
+
+
+def save_session_history(session_id: str, history: list[dict]):
+    try:
+        r.setex(f"chat:{session_id}", SESSION_TTL, json.dumps(history))
+    except Exception:
+        pass
+
+
+def delete_session(session_id: str):
+    try:
+        r.delete(f"chat:{session_id}")
+    except Exception:
+        pass
+
+
+def chat_with_memory(session_id: str, question: str, context_chunks: list, mode: str = "normal") -> str:
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    history = get_session_history(session_id)
+    context_text = "\n\n".join([c.content for c in context_chunks])
+
+    mode_instructions = {
+        "normal": "RÃ©ponds Ã  la question de maniÃ¨re claire et prÃ©cise.",
+        "summary": "Fais un rÃ©sumÃ© synthÃ©tique en 5 points clÃ©s maximum sous forme de liste bullet.",
+        "step_by_step": "Explique Ã©tape par Ã©tape avec des exemples Ã  chaque Ã©tape.",
+        "quiz_express": "GÃ©nÃ¨re 3 questions rapides pour tester la comprÃ©hension. Format : Q: ... / Options: A... B... C... / RÃ©ponse: ..."
+    }
+    instruction = mode_instructions.get(mode, mode_instructions["normal"])
+
+    messages = [
+        {
+            "role": "system",
+            "content": f"Tu es un tuteur pÃ©dagogique. {instruction} Utilise UNIQUEMENT le contenu du cours suivant. Si la rÃ©ponse n'y est pas, dis-le poliment.\n\nCONTENU DU COURS :\n{context_text}"
+        }
+    ]
+    messages.extend(history[-10:])
+    messages.append({"role": "user", "content": question})
+
+    response = client.chat.completions.create(
+    model="llama-3.3-70b-versatile",
+    messages=messages,
+    max_tokens=800,
+    temperature=0.3
+)
+    answer = response.choices[0].message.content
+
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+    save_session_history(session_id, history)
+
+    return answer
+```
+
+### backend\app\services\quiz_service.py
+```
+import math
+
+def update_student_theta(current_theta: float, question_difficulty: float, is_correct: bool):
+    """
+    Version simplifiÃ©e de l'IRT (Stochastic Gradient Descent).
+    Met Ã  jour la capacitÃ© (theta) de l'Ã©tudiant.
+    """
+    k = 0.5 # Facteur d'apprentissage (vitesse d'Ã©volution)
+    
+    # ProbabilitÃ© de rÃ©ussite thÃ©orique (Fonction logistique)
+    p_success = 1 / (1 + math.exp(-(current_theta - question_difficulty)))
+    
+    actual_score = 1.0 if is_correct else 0.0
+    
+    # Nouvelle estimation de theta
+    new_theta = current_theta + k * (actual_score - p_success)
+    
+    return round(new_theta, 2)
+
+def select_next_question(questions: list, student_theta: float):
+    """
+    Choisit la question dont la difficultÃ© est la plus proche du niveau de l'Ã©lÃ¨ve.
+    """
+    if not questions: return None
+    # On trie par la distance absolue entre theta et la difficultÃ© b
+    return min(questions, key=lambda q: abs(q.difficulty_b - student_theta))
+```
+
+### backend\app\tests\__init__.py
+```
+```
+
+### backend\app\tests\test_main.py
+```
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
+from app.main import app
+from app.database.models import Base
+from app.core.dependencies import get_db
+
+import os
+
+DATABASE_URL = "postgresql://postgres.ebdstkoucralzcksdhoe:tyyarazwina@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+
+engine = create_engine(DATABASE_URL)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def override_get_db():
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+app.dependency_overrides[get_db] = override_get_db
+
+@pytest.fixture(autouse=True)
+def setup_db():
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.commit()
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
+client = TestClient(app)
+
+# â”€â”€â”€ AUTH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_signup():
+    res = client.post("/auth/signup", json={"email": "test@supmti.ma", "password": "secret123", "full_name": "Test"})
+    assert res.status_code == 200
+
+def test_signup_duplicate():
+    client.post("/auth/signup", json={"email": "dup@test.ma", "password": "123456", "full_name": "Dup"})
+    res = client.post("/auth/signup", json={"email": "dup@test.ma", "password": "123456", "full_name": "Dup"})
+    assert res.status_code == 400
+
+def test_login_success():
+    client.post("/auth/signup", json={"email": "adam@test.ma", "password": "pass123", "full_name": "Adam"})
+    res = client.post("/auth/login", json={"email": "adam@test.ma", "password": "pass123"})
+    assert res.status_code == 200
+    assert "access_token" in res.json()
+
+def test_login_wrong_password():
+    client.post("/auth/signup", json={"email": "adam2@test.ma", "password": "pass123", "full_name": "Adam"})
+    res = client.post("/auth/login", json={"email": "adam2@test.ma", "password": "mauvais"})
+    assert res.status_code == 401
+
+# â”€â”€â”€ HELPER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def get_token(email="user@test.ma", password="pass123", name="User"):
+    client.post("/auth/signup", json={"email": email, "password": password, "full_name": name})
+    res = client.post("/auth/login", json={"email": email, "password": password})
+    return res.json()["access_token"]
+
+def auth_headers(token):
+    return {"Authorization": f"Bearer {token}"}
+
+# â”€â”€â”€ ROUTES PROTÃ‰GÃ‰ES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_lessons_requires_auth():
+    res = client.get("/lessons")
+    assert res.status_code == 401  # FastAPI retourne 401 sans token (pas 403)
+
+def test_lessons_with_auth():
+    token = get_token()
+    res = client.get("/lessons", headers=auth_headers(token))
+    assert res.status_code == 200
+    assert isinstance(res.json(), list)
+
+def test_stats_with_auth():
+    token = get_token("stats@test.ma")
+    res = client.get("/stats", headers=auth_headers(token))
+    assert res.status_code == 200
+    assert "theta" in res.json()
+
+def test_teacher_stats_blocked_for_student():
+    token = get_token("student@test.ma")
+    res = client.get("/teacher/stats", headers=auth_headers(token))
+    assert res.status_code == 403
+
+def test_lesson_not_found():
+    import uuid
+    token = get_token("notfound@test.ma")
+    fake_id = str(uuid.uuid4())
+    res = client.get(f"/lessons/{fake_id}", headers=auth_headers(token))
+    assert res.status_code == 404
+
+# â”€â”€â”€ IRT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+def test_irt_theta_increases_on_correct():
+    from app.services.quiz_service import update_student_theta
+    assert update_student_theta(0.0, 0.0, True) > 0.0
+
+def test_irt_theta_decreases_on_wrong():
+    from app.services.quiz_service import update_student_theta
+    assert update_student_theta(0.0, 0.0, False) < 0.0
+
+def test_irt_select_closest_question():
+    from app.services.quiz_service import select_next_question
+    from unittest.mock import MagicMock
+    q1, q2, q3 = MagicMock(), MagicMock(), MagicMock()
+    q1.difficulty_b, q2.difficulty_b, q3.difficulty_b = -1.0, 0.5, 2.0
+    assert select_next_question([q1, q2, q3], 0.4) == q2
+```
+
+### backend\conftest.py
+```
+import sys
+import os
+sys.path.insert(0, os.path.dirname(__file__))
+
+```
+
+### backend\regenerate_embeddings.py
+```
+from app.database.session import SessionLocal
+from app.database.models import LessonChunk
+from app.services.ai_service import create_embeddings
+
+db = SessionLocal()
+chunks = db.query(LessonChunk).filter(LessonChunk.embedding.is_(None)).all()
+for chunk in chunks:
+    chunk.embedding = create_embeddings(chunk.content)
+db.commit()
+print(f"{len(chunks)} chunks mis Ã  jour")
+```
+
+### docker-compose.yml
+```
+version: '3.8'
+
+services:
+  db:
+    image: ankane/pgvector:latest 
+    container_name: learnai-db
+    restart: always
+    environment:
+      POSTGRES_USER: user_admin
+      POSTGRES_PASSWORD: password_pfe
+      POSTGRES_DB: learnai_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    container_name: learnai-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+```
+
+### frontend\AGENTS.md
+```
+<!-- BEGIN:nextjs-agent-rules -->
+# This is NOT the Next.js you know
+
+This version has breaking changes â€” APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+<!-- END:nextjs-agent-rules -->
+
+```
+
+### frontend\CLAUDE.md
+```
+@AGENTS.md
+
+```
+
+### frontend\next.config.ts
+```
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+
+```
+
+### frontend\next-env.d.ts
+```
+/// <reference types="next" />
+/// <reference types="next/image-types/global" />
+import "./.next/dev/types/routes.d.ts";
+
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.
+
+```
+
+### frontend\package.json
+```
+{
+  "name": "frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.20",
+    "lucide-react": "^1.17.0",
+    "next": "16.2.7",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-markdown": "^10.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.7",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+```
+
+### frontend\package-lock.json
+```
 {
   "name": "frontend",
   "version": "0.1.0",
@@ -9,7 +1602,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@tailwindcss/typography": "^0.5.20",
-        "framer-motion": "^12.40.0",
         "lucide-react": "^1.17.0",
         "next": "16.2.7",
         "react": "19.2.4",
@@ -3878,33 +5470,6 @@
         "url": "https://github.com/sponsors/ljharb"
       }
     },
-    "node_modules/framer-motion": {
-      "version": "12.40.0",
-      "resolved": "https://registry.npmjs.org/framer-motion/-/framer-motion-12.40.0.tgz",
-      "integrity": "sha512-uaBd3qC1v3KQqBEjwTUd183K6PbS+j0yR9w9VmEOLWA/tnUcSn8Xa3uck7t4dgpDoUss8xQTcj8W2L07lrnLFg==",
-      "license": "MIT",
-      "dependencies": {
-        "motion-dom": "^12.40.0",
-        "motion-utils": "^12.39.0",
-        "tslib": "^2.4.0"
-      },
-      "peerDependencies": {
-        "@emotion/is-prop-valid": "*",
-        "react": "^18.0.0 || ^19.0.0",
-        "react-dom": "^18.0.0 || ^19.0.0"
-      },
-      "peerDependenciesMeta": {
-        "@emotion/is-prop-valid": {
-          "optional": true
-        },
-        "react": {
-          "optional": true
-        },
-        "react-dom": {
-          "optional": true
-        }
-      }
-    },
     "node_modules/function-bind": {
       "version": "1.1.2",
       "resolved": "https://registry.npmjs.org/function-bind/-/function-bind-1.1.2.tgz",
@@ -5956,21 +7521,6 @@
         "url": "https://github.com/sponsors/ljharb"
       }
     },
-    "node_modules/motion-dom": {
-      "version": "12.40.0",
-      "resolved": "https://registry.npmjs.org/motion-dom/-/motion-dom-12.40.0.tgz",
-      "integrity": "sha512-HxU3ZaBwNPVQUBQf1xxgq+7JrPNZvjLVxgbpEZL7RrWJnsxOf0/OM+yrHG9ogLQ31Do/r57Oz2gQWPK+6q62mg==",
-      "license": "MIT",
-      "dependencies": {
-        "motion-utils": "^12.39.0"
-      }
-    },
-    "node_modules/motion-utils": {
-      "version": "12.39.0",
-      "resolved": "https://registry.npmjs.org/motion-utils/-/motion-utils-12.39.0.tgz",
-      "integrity": "sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==",
-      "license": "MIT"
-    },
     "node_modules/ms": {
       "version": "2.1.3",
       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
@@ -7941,3 +9491,1402 @@
     }
   }
 }
+
+```
+
+### frontend\README.md
+```
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+```
+
+### frontend\src\app\layout.tsx
+```
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "Create Next App",
+  description: "Generated by create next app",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">{children}</body>
+    </html>
+  );
+}
+
+```
+
+### frontend\src\app\login\page.tsx
+```
+"use client";
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { GraduationCap, Loader2 } from 'lucide-react';
+
+export default function LoginPage() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const router = useRouter();
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) throw new Error("Identifiants invalides");
+
+      const data = await res.json();
+      // SAUVEGARDE DU TOKEN ET DES INFOS
+      localStorage.setItem("token", data.access_token);
+      localStorage.setItem("userName", data.user.name);
+      localStorage.setItem("userRole", data.user.role);
+      if (data.user.role === "TEACHER" || data.user.role === "ADMIN") {
+        router.push("/teacher");
+      } else {
+        router.push("/");
+      }
+      
+      router.push("/"); // Redirection vers le dashboard
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-slate-100">
+        <div className="flex flex-col items-center mb-8">
+          <div className="bg-indigo-100 p-3 rounded-2xl mb-4 text-indigo-600">
+            <GraduationCap size={40} />
+          </div>
+          <h1 className="text-3xl font-extrabold text-slate-900">Bienvenue</h1>
+          <p className="text-slate-500 text-sm mt-2">Connectez-vous Ã  votre espace LearnAI</p>
+        </div>
+
+        {error && <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-6 text-center">{error}</div>}
+
+        <form onSubmit={handleLogin} className="space-y-5">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Email</label>
+            <input type="email" required className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              placeholder="adam@supmti.ma" onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Mot de passe</label>
+            <input type="password" required className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all flex justify-center items-center gap-2">
+            {loading ? <Loader2 className="animate-spin" size={20} /> : "Se connecter"}
+          </button>
+        </form>
+        
+        <p className="text-center mt-8 text-sm text-slate-500">
+  Pas encore de compte ?{" "}
+  <button onClick={() => router.push("/signup")} className="text-indigo-600 font-bold hover:underline">
+    Inscrivez-vous
+  </button>
+</p>
+      </div>
+    </div>
+  );
+}
+```
+
+### frontend\src\app\page.tsx
+```
+"use client";
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+
+export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) { router.push("/login"); return; }
+
+    const role = localStorage.getItem("userRole");
+    if (role === "TEACHER" || role === "ADMIN") {
+      router.push("/teacher");
+    } else {
+      router.push("/student");
+    }
+  }, [router]);
+
+  return null;
+}
+```
+
+### frontend\src\app\signup\page.tsx
+```
+"use client";
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { GraduationCap, Loader2 } from 'lucide-react';
+
+export default function SignupPage() {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const router = useRouter();
+
+  const handleSignup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("http://127.0.0.1:8000/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: fullName, email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Erreur lors de l'inscription");
+      router.push("/login");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="bg-white p-10 rounded-3xl shadow-xl w-full max-w-md border border-slate-100">
+        <div className="flex flex-col items-center mb-8">
+          <div className="bg-indigo-100 p-3 rounded-2xl mb-4 text-indigo-600">
+            <GraduationCap size={40} />
+          </div>
+          <h1 className="text-3xl font-extrabold text-slate-900">CrÃ©er un compte</h1>
+          <p className="text-slate-500 text-sm mt-2">Rejoignez LearnAI et commencez Ã  apprendre</p>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 text-red-600 p-3 rounded-xl text-sm mb-6 text-center">{error}</div>
+        )}
+
+        <form onSubmit={handleSignup} className="space-y-5">
+          <div>
+            <label className="block text-sm font-semibold mb-2">Nom complet</label>
+            <input type="text" required
+            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              placeholder="Adam Ezziyara"
+              onChange={(e) => setFullName(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Email</label>
+            <input type="email" required
+            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              placeholder="adam@supmti.ma"
+              onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2">Mot de passe</label>
+            <input type="password" required minLength={6}
+            className="w-full p-4 bg-slate-100 border border-slate-200 rounded-2xl outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+              onChange={(e) => setPassword(e.target.value)} />
+          </div>
+          <button type="submit" disabled={loading}
+            className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold hover:bg-indigo-700 transition-all flex justify-center items-center gap-2 disabled:opacity-50">
+            {loading ? <Loader2 className="animate-spin" size={20} /> : "CrÃ©er mon compte"}
+          </button>
+        </form>
+
+        <p className="text-center mt-8 text-sm text-slate-500">
+          DÃ©jÃ  un compte ?{" "}
+          <button onClick={() => router.push("/login")} className="text-indigo-600 font-bold hover:underline">
+            Se connecter
+          </button>
+        </p>
+      </div>
+    </div>
+  );
+}
+```
+
+### frontend\src\app\student\page.tsx
+```
+"use client";
+import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
+import { 
+  BookOpen, Send, Plus, GraduationCap, MessageSquare, 
+  History, Loader2, ChevronRight, LogOut, User as UserIcon,
+  CheckCircle2, XCircle, HelpCircle, ArrowRight, TrendingUp, 
+  Target, RefreshCw, FileText, List, Footprints, Zap
+} from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+type ChatMode = "normal" | "summary" | "step_by_step" | "quiz_express";
+
+const MODES: { id: ChatMode; label: string; icon: any; color: string }[] = [
+  { id: "normal",        label: "Normal",      icon: MessageSquare, color: "indigo" },
+  { id: "summary",       label: "RÃ©sumÃ©",      icon: List,          color: "emerald" },
+  { id: "step_by_step",  label: "Pas Ã  pas",   icon: Footprints,    color: "amber" },
+  { id: "quiz_express",  label: "Quiz express", icon: Zap,           color: "purple" },
+];
+
+export default function Home() {
+  const router = useRouter();
+
+  const [topic, setTopic]           = useState("");
+  const [level, setLevel]           = useState("DÃ©butant");
+  const [loading, setLoading]       = useState(false);
+  const [lesson, setLesson]         = useState<any>(null);
+  const [lessonsList, setLessonsList] = useState<any[]>([]);
+  const [userName, setUserName]     = useState("");
+
+  const [question, setQuestion]     = useState("");
+  const [chatHistory, setChatHistory] = useState<{q: string; a: string; mode: ChatMode}[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatMode, setChatMode]     = useState<ChatMode>("normal");
+  const sessionIdRef                = useRef<string>("");
+
+  const [showQuiz, setShowQuiz]     = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
+  const [quizFeedback, setQuizFeedback] = useState<{correct: boolean; msg: string; score?: number} | null>(null);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [reformulating, setReformulating] = useState(false);
+
+  const [stats, setStats] = useState({ theta: 0, progress_percent: 0, total_attempts: 0, success_rate: 0 });
+
+  const authFetch = (url: string, options: RequestInit = {}) => {
+    const token = localStorage.getItem("token");
+    return fetch(url, {
+      ...options,
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}`, ...options.headers }
+    });
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) { router.push("/login"); return; }
+
+    const role = localStorage.getItem("userRole");
+    if (role === "TEACHER" || role === "ADMIN") {
+      router.push("/teacher");
+      return;
+    }
+
+    setUserName(localStorage.getItem("userName") || "Ã‰tudiant");
+    fetchLessons();
+    fetchStats();
+  }, [router]);
+
+  const fetchStats = async () => {
+    try {
+      const res = await authFetch(`${API}/stats`);
+      if (res.ok) setStats(await res.json());
+    } catch {}
+  };
+
+  const fetchLessons = async () => {
+    try {
+      const res = await authFetch(`${API}/lessons`);
+      if (res.ok) setLessonsList(await res.json());
+    } catch {}
+  };
+
+  const loadLesson = async (id: string) => {
+    setLoading(true);
+    setShowQuiz(false);
+    setCurrentQuestion(null);
+    setQuizFeedback(null);
+    setChatHistory([]);
+    sessionIdRef.current = `${id}_${Date.now()}`;
+    try {
+      const res = await authFetch(`${API}/lessons/${id}`);
+      if (res.ok) setLesson(await res.json());
+    } finally { setLoading(false); }
+  };
+
+  const generateCourse = async () => {
+  if (!topic) return;
+  setLoading(true);
+  try {
+    const token = localStorage.getItem("token");
+    console.log("Token:", token); // â† vÃ©rifie dans la console browser
+    const res = await authFetch(`${API}/generate-course`, {
+      method: "POST",
+      body: JSON.stringify({ topic, level }),
+    });
+    console.log("Status:", res.status);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      await fetchLessons();
+      await loadLesson(data.lesson_id);
+      setTopic("");
+    } finally { setLoading(false); }
+  };
+
+  // F1 â€” Reformulation selon niveau IRT
+  const reformulateLesson = async () => {
+    if (!lesson) return;
+    setReformulating(true);
+    try {
+      const res = await authFetch(`${API}/lessons/${lesson.id}/reformulate`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setLesson((prev: any) => ({ ...prev, content: data.content }));
+      }
+    } finally { setReformulating(false); }
+  };
+
+  // F3 â€” Chat avec mode
+  const askQuestion = async () => {
+    if (!lesson || !question) return;
+    const q = question;
+    setQuestion("");
+    setChatLoading(true);
+    try {
+      const res = await authFetch(`${API}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ lesson_id: lesson.id, question: q, session_id: sessionIdRef.current, mode: chatMode }),
+      });
+      const data = await res.json();
+      setChatHistory(prev => [...prev, { q, a: data.answer, mode: chatMode }]);
+    } finally { setChatLoading(false); }
+  };
+
+  const startQuiz = async () => {
+    if (!lesson) return;
+    setShowQuiz(true);
+    setQuizLoading(true);
+    setQuizFeedback(null);
+    setCurrentQuestion(null);
+    try {
+      const res = await authFetch(`${API}/quiz/next/${lesson.id}`);
+      if (res.ok) setCurrentQuestion(await res.json());
+    } finally { setQuizLoading(false); }
+  };
+
+  const submitAnswer = async (answer: string) => {
+    if (quizFeedback || !currentQuestion) return;
+    setQuizLoading(true);
+    try {
+      const res = await authFetch(`${API}/quiz/submit`, {
+        method: "POST",
+        body: JSON.stringify({ question_id: currentQuestion.id, answer }),
+      });
+      const data = await res.json();
+      setQuizFeedback({ correct: data.is_correct, msg: data.feedback });
+      fetchStats();
+    } finally { setQuizLoading(false); }
+  };
+
+  const handleLogout = () => { localStorage.clear(); router.push("/login"); };
+
+  const modeColors: Record<ChatMode, string> = {
+    normal: "bg-indigo-600",
+    summary: "bg-emerald-600",
+    step_by_step: "bg-amber-500",
+    quiz_express: "bg-purple-600",
+  };
+
+  return (
+    <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
+      
+      {/* SIDEBAR GAUCHE */}
+      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col shrink-0 shadow-lg z-20">
+        <div className="p-6 flex items-center gap-2 text-indigo-600">
+          <GraduationCap size={32} strokeWidth={2.5} />
+          <span className="font-bold text-2xl tracking-tight">LearnAI</span>
+        </div>
+
+        <div className="mx-4 mb-6 p-5 bg-indigo-50 rounded-3xl border border-indigo-100 shadow-sm">
+          <div className="flex items-center gap-2 text-indigo-600 mb-3">
+            <TrendingUp size={18} />
+            <span className="text-xs font-black uppercase tracking-widest">Niveau IA</span>
+          </div>
+          <div className="flex justify-between items-end mb-2">
+            <span className="text-2xl font-black text-indigo-900">{stats.progress_percent}%</span>
+            <span className="text-[10px] font-bold px-2 py-1 bg-white rounded-full text-indigo-500 shadow-sm">
+              {stats.theta > 1 ? 'EXPERT' : stats.theta > 0 ? 'AVANCÃ‰' : stats.theta > -1 ? 'INTER.' : 'DÃ‰BUTANT'}
+            </span>
+          </div>
+          <div className="w-full bg-indigo-200/50 h-2 rounded-full overflow-hidden">
+            <div className="bg-indigo-600 h-full transition-all duration-1000" style={{ width: `${stats.progress_percent}%` }} />
+          </div>
+          <div className="mt-3 flex justify-between text-[10px] text-indigo-400 font-bold">
+            <span className="flex items-center gap-1"><Target size={10}/> {stats.success_rate}% RÃ©ussite</span>
+            <span>{stats.total_attempts} Questions</span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4">
+          <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 px-2">
+            <History size={14} /> Historique
+          </div>
+          <div className="space-y-1">
+            {lessonsList.map((l) => (
+              <button key={l.id} onClick={() => loadLesson(l.id)}
+                className={`w-full text-left p-3 rounded-xl text-sm transition-all flex items-center justify-between group ${lesson?.id === l.id ? 'bg-indigo-600 text-white shadow-md' : 'hover:bg-slate-100 text-slate-600'}`}>
+                <span className="truncate font-medium">{l.title}</span>
+                <ChevronRight size={14} className={`${lesson?.id === l.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`} />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-4 border-t bg-slate-50/50">
+          <div className="flex items-center gap-3 px-3 py-3 bg-white rounded-2xl border border-slate-100 shadow-sm mb-3">
+            <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><UserIcon size={20} /></div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-black truncate">{userName}</p>
+              <p className="text-[10px] text-slate-400 font-bold uppercase">Session Ã‰tudiant</p>
+            </div>
+          </div>
+          <button onClick={handleLogout} className="w-full flex items-center gap-2 p-3 text-sm text-red-500 hover:bg-red-50 rounded-xl transition-colors font-bold justify-center">
+            <LogOut size={16} /> DÃ©connexion
+          </button>
+        </div>
+      </aside>
+
+      {/* ZONE CENTRALE */}
+      <main className="flex-1 flex flex-col min-w-0 bg-white relative">
+        <header className="h-20 border-b border-slate-200 flex items-center px-10 gap-4 bg-white/80 backdrop-blur-md sticky top-0 z-10">
+          <div className="relative flex-1 max-w-md">
+            <input type="text" placeholder="Quel sujet voulez-vous explorer ?" value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && generateCourse()}
+              className="w-full bg-slate-100 rounded-2xl px-6 py-3 text-sm focus:ring-2 ring-indigo-500 outline-none" />
+          </div>
+          <select className="bg-slate-100 rounded-2xl px-4 py-3 text-sm font-bold outline-none cursor-pointer"
+            value={level} onChange={(e) => setLevel(e.target.value)}>
+            <option>DÃ©butant</option><option>IntermÃ©diaire</option><option>AvancÃ©</option>
+          </select>
+          <button onClick={generateCourse} disabled={loading}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-2xl transition-all shadow-lg disabled:opacity-50">
+            {loading ? <Loader2 className="animate-spin" size={24} /> : <Plus size={24} />}
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-12">
+          {lesson ? (
+            <div className="max-w-3xl mx-auto">
+
+              {/* Bouton reformulation F1 */}
+              <div className="flex justify-end mb-4">
+                <button onClick={reformulateLesson} disabled={reformulating}
+                  className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-indigo-600 border border-slate-200 hover:border-indigo-300 px-4 py-2 rounded-xl transition-all">
+                  {reformulating ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  Adapter Ã  mon niveau
+                </button>
+              </div>
+
+              <article className="prose prose-slate prose-indigo lg:prose-xl mb-20">
+                <ReactMarkdown>{lesson.content}</ReactMarkdown>
+              </article>
+
+              {/* QUIZ */}
+              <div className="mt-20 pt-10 border-t border-slate-100">
+                {!showQuiz ? (
+                  <div className="text-center">
+                    <h4 className="text-xl font-black mb-4">PrÃªt pour un dÃ©fi ?</h4>
+                    <p className="text-slate-500 mb-8">Testez votre comprÃ©hension avec notre IA adaptative.</p>
+                    <button onClick={startQuiz}
+                      className="bg-emerald-600 text-white px-10 py-5 rounded-3xl font-black hover:bg-emerald-700 transition-all flex items-center gap-3 mx-auto shadow-xl">
+                      <HelpCircle size={24} /> Lancer le Quiz Adaptatif
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-slate-50 p-10 rounded-[40px] border-2 border-emerald-100 shadow-inner">
+                    <div className="flex justify-between items-center mb-8">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-emerald-100 p-2 rounded-xl text-emerald-600"><CheckCircle2 size={24} /></div>
+                        <h3 className="font-black text-xl text-emerald-900">Question Adaptative</h3>
+                      </div>
+                      <button onClick={() => setShowQuiz(false)} className="text-slate-400 hover:text-slate-600 font-bold">Fermer</button>
+                    </div>
+
+                    {quizLoading && !currentQuestion ? (
+                      <div className="flex flex-col items-center p-10 gap-4">
+                        <Loader2 className="animate-spin text-emerald-600" size={40} />
+                        <p className="text-sm font-bold text-emerald-600 animate-pulse">L'IA prÃ©pare votre question...</p>
+                      </div>
+                    ) : currentQuestion && (
+                      <div className="space-y-8">
+                        <p className="text-2xl font-bold text-slate-800">{currentQuestion.text}</p>
+                        <div className="grid gap-4">
+                          {currentQuestion.options.map((opt: string) => (
+                            <button key={opt} onClick={() => submitAnswer(opt)} disabled={!!quizFeedback}
+                              className={`text-left p-5 rounded-2xl border-2 transition-all font-bold text-lg ${quizFeedback ? 'cursor-not-allowed opacity-60' : 'bg-white hover:border-emerald-500 hover:bg-emerald-50 shadow-sm'}`}>
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+
+                        {quizFeedback && (
+                          <div className={`p-6 rounded-3xl flex items-center gap-4 ${quizFeedback.correct ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                            <div className="p-2 bg-white rounded-full shadow-sm">
+                              {quizFeedback.correct ? <CheckCircle2 className="text-emerald-500" /> : <XCircle className="text-red-500" />}
+                            </div>
+                            <div className="flex-1">
+                              <p className="font-black text-lg">{quizFeedback.correct ? 'Excellent !' : 'Oups !'}</p>
+                              <p className="text-sm opacity-90">{quizFeedback.msg}</p>
+                            </div>
+                            <button onClick={startQuiz} className="bg-white px-6 py-3 rounded-2xl text-sm font-black shadow-md flex items-center gap-2">
+                              Suivante <ArrowRight size={18} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-slate-300">
+              <BookOpen size={120} strokeWidth={0.5} className="mb-6 opacity-20" />
+              <h2 className="text-2xl font-black text-slate-400">Votre futur commence ici.</h2>
+              <p className="text-slate-400 font-medium">GÃ©nÃ©rez ou sÃ©lectionnez un cours pour dÃ©buter.</p>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* SIDEBAR DROITE â€” CHATBOT */}
+      <aside className="w-96 bg-slate-50 border-l border-slate-200 flex flex-col shrink-0 z-10 shadow-2xl">
+        <div className="p-4 border-b border-slate-200 bg-white">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="bg-indigo-600 p-2 rounded-xl text-white"><MessageSquare size={18} /></div>
+            <h3 className="font-black text-slate-800">Tuteur Intelligent</h3>
+          </div>
+          {/* SÃ©lecteur de mode F3 */}
+          <div className="grid grid-cols-4 gap-1">
+            {MODES.map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => setChatMode(id)}
+                className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl text-[10px] font-bold transition-all ${
+                  chatMode === id ? `${modeColors[id]} text-white shadow-sm` : 'text-slate-400 hover:bg-slate-100'
+                }`}>
+                <Icon size={13} />
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {chatHistory.length === 0 && (
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+              <p className="text-sm text-slate-500 italic">Bonjour ! SÃ©lectionnez un mode et posez votre question sur le cours.</p>
+            </div>
+          )}
+          {chatHistory.map((chat, i) => (
+            <div key={i} className="flex flex-col gap-2">
+              <div className="flex items-center gap-1 self-end">
+                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full text-white ${modeColors[chat.mode]}`}>
+                  {MODES.find(m => m.id === chat.mode)?.label}
+                </span>
+              </div>
+              <div className="self-end bg-indigo-600 text-white p-3 rounded-2xl rounded-tr-none text-sm max-w-[85%] font-medium">
+                {chat.q}
+              </div>
+              <div className="self-start bg-white border border-slate-100 p-4 rounded-2xl rounded-tl-none text-sm max-w-[85%] shadow-sm text-slate-700 leading-relaxed">
+                <span className="text-indigo-600 font-black text-[9px] block mb-1 uppercase tracking-widest">Assistant LearnAI</span>
+                {chat.a}
+              </div>
+            </div>
+          ))}
+          {chatLoading && (
+            <div className="flex gap-1.5 p-3 bg-white rounded-2xl w-20 shadow-sm border border-slate-100">
+              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" />
+              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-75" />
+              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce delay-150" />
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 bg-white border-t border-slate-200">
+          <div className="relative">
+            <input type="text" placeholder={`Mode : ${MODES.find(m => m.id === chatMode)?.label}...`}
+              className="w-full bg-slate-100 rounded-2xl px-4 py-3 pr-12 text-sm outline-none focus:ring-2 ring-indigo-500"
+              value={question} onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && askQuestion()} />
+            <button onClick={askQuestion}
+              className={`absolute right-2 top-2 p-2 text-white rounded-xl transition-all ${modeColors[chatMode]}`}>
+              <Send size={16} />
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+```
+
+### frontend\src\app\teacher\page.tsx
+```
+"use client";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import {
+  GraduationCap, Users, BarChart3, AlertTriangle, TrendingUp,
+  LayoutDashboard, LogOut, RefreshCw, ArrowUpDown, CheckCircle,
+  Activity, Pencil, Trash2, X, Save, Loader2, ChevronRight,
+  ArrowLeft, Target, AlertOctagon
+} from "lucide-react";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+const authFetch = (url: string, options: RequestInit = {}) => {
+  const token = localStorage.getItem("token");
+  return fetch(url, {
+    ...options,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...options.headers }
+  });
+};
+
+const thetaLabel = (t: number) =>
+  t > 1 ? "Expert" : t > 0 ? "AvancÃ©" : t > -1 ? "IntermÃ©diaire" : "DÃ©butant";
+const thetaColor = (t: number) =>
+  t > 1 ? "#10b981" : t > 0 ? "#6366f1" : t > -1 ? "#f59e0b" : "#ef4444";
+const thetaPercent = (t: number) =>
+  Math.max(0, Math.min(100, Math.round(((t + 3) / 6) * 100)));
+
+const NAV = [
+  { id: "overview",    label: "Vue d'ensemble", Icon: LayoutDashboard },
+  { id: "students",    label: "Ã‰tudiants",       Icon: Users           },
+  { id: "heatmap",     label: "Questions",        Icon: BarChart3       },
+  { id: "reco",        label: "Recommandations",  Icon: AlertTriangle   },
+  { id: "progression", label: "Progression",      Icon: TrendingUp      },
+];
+
+interface Student {
+  id: string;
+  name: string;
+  email: string;
+  theta: number;
+  progress_percent: number;
+  total_attempts: number;
+  success_rate: number;
+}
+
+interface Attempt {
+  id: string;
+  question_text: string;
+  lesson_title: string;
+  is_correct: boolean;
+  timestamp: string | null;
+}
+
+interface StudentDetail extends Student {
+  attempts: Attempt[];
+}
+
+export default function TeacherDashboard() {
+  const router = useRouter();
+  const [userName, setUserName]               = useState("");
+  const [stats, setStats]                     = useState<any>(null);
+  const [students, setStudents]               = useState<Student[]>([]);
+  const [heatmap, setHeatmap]                 = useState<any[]>([]);
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [progression, setProgression]         = useState<any[]>([]);
+  const [loading, setLoading]                 = useState(true);
+  const [sortAsc, setSortAsc]                 = useState(false);
+  const [activeNav, setActiveNav]             = useState("overview");
+
+  // --- CRUD Ã©tudiant ---
+  const [selectedStudent, setSelectedStudent] = useState<StudentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ full_name: "", email: "", ability_theta: "" });
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Student | null>(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) { router.push("/login"); return; }
+    const role = localStorage.getItem("userRole");
+    if (role !== "TEACHER" && role !== "ADMIN") { router.push("/student"); return; }
+    setUserName(localStorage.getItem("userName") || "Enseignant");
+    fetchAll();
+  }, []);
+
+  const fetchAll = async () => {
+    setLoading(true);
+    try {
+      const [s, st, h, r, p] = await Promise.all([
+        authFetch(`${API}/teacher/stats`).then(r => r.json()),
+        authFetch(`${API}/teacher/students`).then(r => r.json()),
+        authFetch(`${API}/teacher/heatmap`).then(r => r.json()),
+        authFetch(`${API}/teacher/recommendations`).then(r => r.json()),
+        authFetch(`${API}/teacher/progression`).then(r => r.json()),
+      ]);
+      setStats(s ?? null);
+      setStudents(Array.isArray(st) ? st : st?.students ?? []);
+      setHeatmap(Array.isArray(h) ? h : h?.questions ?? []);
+      setRecommendations(Array.isArray(r) ? r : r?.recommendations ?? []);
+      setProgression(Array.isArray(p) ? p : p?.progression ?? []);
+    } catch {
+      setStudents([]); setHeatmap([]); setRecommendations([]); setProgression([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => { localStorage.clear(); router.push("/login"); };
+
+  const sortedStudents = [...students].sort((a, b) =>
+    sortAsc ? (a.theta ?? 0) - (b.theta ?? 0) : (b.theta ?? 0) - (a.theta ?? 0)
+  );
+  const maxAttempts = progression.length > 0
+    ? Math.max(...progression.map(p => p.attempts ?? 0), 1)
+    : 1;
+
+  const userInitials = userName
+    .split(" ").slice(0, 2)
+    .map((w: string) => w[0]?.toUpperCase() ?? "")
+    .join("");
+
+  const avgTheta: number = typeof stats?.average_theta === "number" ? stats.average_theta : 0;
+
+  const currentLabel = NAV.find(n => n.id === activeNav)?.label ?? "";
+
+  // --- CRUD handlers ---
+  const openStudentDetail = async (id: string) => {
+    setDetailLoading(true);
+    setSelectedStudent(null);
+    try {
+      const res = await authFetch(`${API}/teacher/students/${id}`);
+      if (res.ok) setSelectedStudent(await res.json());
+    } finally { setDetailLoading(false); }
+  };
+
+  const startEdit = (s: Student) => {
+    setEditingId(s.id);
+    setEditForm({ full_name: s.name, email: s.email, ability_theta: String(s.theta) });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({ full_name: "", email: "", ability_theta: "" });
+  };
+
+  const saveEdit = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await authFetch(`${API}/teacher/students/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          full_name: editForm.full_name,
+          email: editForm.email,
+          ability_theta: parseFloat(editForm.ability_theta),
+        }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setStudents(prev => prev.map(s => s.id === id
+          ? { ...s, name: updated.name, email: updated.email, theta: updated.theta, progress_percent: thetaPercent(updated.theta) }
+          : s));
+        if (selectedStudent?.id === id) await openStudentDetail(id);
+        cancelEdit();
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Erreur lors de la mise Ã  jour");
+      }
+    } finally { setSaving(false); }
+  };
+
+  const confirmDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      const res = await authFetch(`${API}/teacher/students/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setStudents(prev => prev.filter(s => s.id !== id));
+        if (selectedStudent?.id === id) setSelectedStudent(null);
+        setDeleteConfirm(null);
+      }
+    } finally { setDeletingId(null); }
+  };
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 font-sans">
+
+      {/* SIDEBAR */}
+      <aside className="w-56 bg-white border-r border-slate-100 flex flex-col sticky top-0 h-screen shrink-0">
+        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-slate-100">
+          <div className="w-7 h-7 bg-indigo-100 rounded-lg flex items-center justify-center text-indigo-600">
+            <GraduationCap size={15} strokeWidth={2.5} />
+          </div>
+          <div>
+            <p className="text-sm font-black text-slate-900 leading-tight">LearnAI</p>
+            <p className="text-[10px] text-slate-400 leading-tight">Espace enseignant</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 px-5 py-4 border-b border-slate-100">
+          <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-700 text-xs font-black shrink-0">
+            {userInitials || "ME"}
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-slate-800 truncate">{userName}</p>
+            <p className="text-[10px] text-slate-400">Professeur</p>
+          </div>
+        </div>
+
+        <nav className="flex-1 py-3 overflow-y-auto">
+          {NAV.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => { setActiveNav(id); setSelectedStudent(null); }}
+              className={`w-full flex items-center gap-2.5 px-5 py-2.5 text-sm transition-colors text-left border-l-2
+                ${activeNav === id
+                  ? "text-indigo-600 bg-indigo-50 border-indigo-500 font-bold"
+                  : "text-slate-500 border-transparent hover:bg-slate-50 hover:text-slate-700 font-medium"}`}
+            >
+              <Icon size={15} />
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="px-5 py-4 border-t border-slate-100">
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 text-sm text-red-500 hover:text-red-600 font-medium transition-colors"
+          >
+            <LogOut size={14} /> DÃ©connexion
+          </button>
+        </div>
+      </aside>
+
+      {/* MAIN */}
+      <main className="flex-1 overflow-y-auto px-8 py-8 space-y-6">
+
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-black text-slate-900">{currentLabel}</h1>
+            <p className="text-sm text-slate-400 mt-0.5">Tableau de bord enseignant</p>
+          </div>
+          <button
+            onClick={fetchAll}
+            className="w-8 h-8 flex items-center justify-center border border-slate-200 rounded-xl text-slate-400 hover:bg-slate-100 transition-colors"
+          >
+            <RefreshCw size={14} />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (
+          <>
+            {/* ===== OVERVIEW ===== */}
+            {activeNav === "overview" && (
+              <div className="space-y-6">
+                {stats && (
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Ã‰tudiants</p>
+                      <p className="text-3xl font-black text-slate-900">{stats.total_students ?? 0}</p>
+                      <p className="text-xs text-slate-400 mt-1">inscrits sur la plateforme</p>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Niveau moyen</p>
+                      <p className="text-3xl font-black" style={{ color: thetaColor(avgTheta) }}>
+                        {thetaLabel(avgTheta)}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Î¸ = {avgTheta.toFixed(2)}</p>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Progression globale</p>
+                      <p className="text-3xl font-black text-slate-900">{thetaPercent(avgTheta)}%</p>
+                      <div className="mt-3 w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{ width: `${thetaPercent(avgTheta)}%`, backgroundColor: thetaColor(avgTheta) }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Quick summary cards linking to other pages */}
+                <div className="grid grid-cols-3 gap-4">
+                  <button onClick={() => setActiveNav("students")} className="bg-white rounded-2xl border border-slate-100 p-5 text-left hover:border-indigo-200 transition-colors">
+                    <Users size={18} className="text-indigo-500 mb-2" />
+                    <p className="text-sm font-black text-slate-800">{students.length} Ã©tudiants</p>
+                    <p className="text-xs text-slate-400 mt-1">Voir la liste dÃ©taillÃ©e</p>
+                  </button>
+                  <button onClick={() => setActiveNav("heatmap")} className="bg-white rounded-2xl border border-slate-100 p-5 text-left hover:border-indigo-200 transition-colors">
+                    <BarChart3 size={18} className="text-red-400 mb-2" />
+                    <p className="text-sm font-black text-slate-800">{heatmap.length} questions analysÃ©es</p>
+                    <p className="text-xs text-slate-400 mt-1">Voir la heatmap</p>
+                  </button>
+                  <button onClick={() => setActiveNav("reco")} className="bg-white rounded-2xl border border-slate-100 p-5 text-left hover:border-indigo-200 transition-colors">
+                    <AlertTriangle size={18} className="text-amber-400 mb-2" />
+                    <p className="text-sm font-black text-slate-800">{recommendations.length} recommandations</p>
+                    <p className="text-xs text-slate-400 mt-1">Voir les alertes</p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ===== STUDENTS (CRUD) ===== */}
+            {activeNav === "students" && !selectedStudent && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="flex items-center gap-2 text-sm font-black text-slate-800">
+                    <Users size={16} className="text-slate-400" />
+                    Ã‰tudiants ({students.length})
+                  </h2>
+                  <button
+                    onClick={() => setSortAsc(!sortAsc)}
+                    className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <ArrowUpDown size={13} />
+                    Trier par Î¸
+                  </button>
+                </div>
+                {students.length === 0 ? (
+                  <p className="text-center text-slate-400 text-sm py-8">Aucun Ã©tudiant inscrit.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {sortedStudents.map((s, i) => (
+                      <div key={s.id ?? i} className="rounded-xl hover:bg-slate-50 transition-colors">
+                        {editingId === s.id ? (
+                          <div className="flex items-center gap-2 px-3 py-2.5">
+                            <input
+                              value={editForm.full_name}
+                              onChange={e => setEditForm({ ...editForm, full_name: e.target.value })}
+                              placeholder="Nom"
+                              className="flex-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 text-sm font-bold outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+                            />
+                            <input
+                              value={editForm.email}
+                              onChange={e => setEditForm({ ...editForm, email: e.target.value })}
+                              placeholder="Email"
+                              className="flex-1 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 text-sm outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+                            />
+                            <input
+                              type="number" step="0.1"
+                              value={editForm.ability_theta}
+                              onChange={e => setEditForm({ ...editForm, ability_theta: e.target.value })}
+                              placeholder="Î¸"
+                              className="w-20 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1.5 text-sm outline-none focus:ring-2 ring-indigo-500 text-slate-900"
+                            />
+                            <button onClick={() => saveEdit(s.id)} disabled={saving}
+                              className="p-2 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition-colors disabled:opacity-50 shrink-0">
+                              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                            </button>
+                            <button onClick={cancelEdit}
+                              className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition-colors shrink-0">
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-3 px-3 py-2.5">
+                            <div
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-black shrink-0"
+                              style={{ backgroundColor: thetaColor(s.theta ?? 0) }}
+                            >
+                              {i + 1}
+                            </div>
+                            <button onClick={() => openStudentDetail(s.id)} className="flex-1 min-w-0 text-left">
+                              <p className="text-sm font-bold text-slate-800 truncate">{s.name ?? "â€”"}</p>
+                              <p className="text-xs text-slate-400 truncate">{s.email ?? ""}</p>
+                            </button>
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-black uppercase" style={{ color: thetaColor(s.theta ?? 0) }}>
+                                {thetaLabel(s.theta ?? 0)}
+                              </p>
+                              <p className="text-[10px] text-slate-400">Î¸ = {(s.theta ?? 0).toFixed(2)}</p>
+                            </div>
+                            <div className="w-28 shrink-0">
+                              <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                <span>{s.success_rate ?? 0}%</span>
+                                <span>{s.total_attempts ?? 0} Q</span>
+                              </div>
+                              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full"
+                                  style={{ width: `${s.progress_percent ?? 0}%`, backgroundColor: thetaColor(s.theta ?? 0) }}
+                                />
+                              </div>
+                            </div>
+                            <div className="flex gap-1.5 shrink-0">
+                              <button onClick={() => openStudentDetail(s.id)}
+                                className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition-colors">
+                                <ChevronRight size={14} />
+                              </button>
+                              <button onClick={() => startEdit(s)}
+                                className="p-2 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 transition-colors">
+                                <Pencil size={14} />
+                              </button>
+                              <button onClick={() => setDeleteConfirm(s)}
+                                className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 transition-colors">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ===== STUDENT DETAIL ===== */}
+            {activeNav === "students" && selectedStudent && (
+              <div className="space-y-6">
+                <button onClick={() => setSelectedStudent(null)}
+                  className="flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-indigo-600">
+                  <ArrowLeft size={16} /> Retour Ã  la liste
+                </button>
+
+                {detailLoading ? (
+                  <div className="flex justify-center p-20">
+                    <Loader2 className="animate-spin text-indigo-600" size={32} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                      <div className="flex justify-between items-start mb-6">
+                        <div>
+                          <h2 className="text-xl font-black text-slate-900">{selectedStudent.name}</h2>
+                          <p className="text-slate-400 text-sm">{selectedStudent.email}</p>
+                        </div>
+                        <span className="text-xs font-black uppercase px-3 py-1.5 rounded-full"
+                          style={{ color: thetaColor(selectedStudent.theta), backgroundColor: `${thetaColor(selectedStudent.theta)}1A` }}>
+                          {thetaLabel(selectedStudent.theta)} (Î¸ = {selectedStudent.theta})
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-slate-50 rounded-xl p-4">
+                          <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Progression</p>
+                          <p className="text-2xl font-black text-slate-900">{selectedStudent.progress_percent}%</p>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-4">
+                          <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Tentatives</p>
+                          <p className="text-2xl font-black text-slate-900">{selectedStudent.total_attempts}</p>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-4">
+                          <p className="text-[10px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1">
+                            <Target size={10} /> RÃ©ussite
+                          </p>
+                          <p className="text-2xl font-black text-slate-900">{selectedStudent.success_rate}%</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+                      <div className="p-6 border-b border-slate-100">
+                        <h3 className="font-black text-sm text-slate-800">Historique des tentatives</h3>
+                      </div>
+                      <div className="divide-y divide-slate-50 max-h-96 overflow-y-auto">
+                        {selectedStudent.attempts.length === 0 && (
+                          <p className="p-6 text-center text-slate-400 text-sm">Aucune tentative.</p>
+                        )}
+                        {selectedStudent.attempts.map(a => (
+                          <div key={a.id} className="p-4 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <p className="text-sm font-bold text-slate-700 truncate">{a.question_text}</p>
+                              <p className="text-xs text-slate-400">{a.lesson_title}</p>
+                            </div>
+                            <span className={`text-[10px] font-black px-2 py-1 rounded-full shrink-0 ${a.is_correct ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                              {a.is_correct ? 'Correct' : 'Incorrect'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ===== HEATMAP ===== */}
+            {activeNav === "heatmap" && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <h2 className="flex items-center gap-2 text-sm font-black text-slate-800 mb-5">
+                  <BarChart3 size={16} className="text-slate-400" />
+                  Questions les plus difficiles ({heatmap.length})
+                </h2>
+                {heatmap.length === 0 ? (
+                  <p className="text-center text-slate-400 text-sm py-8">Aucune tentative enregistrÃ©e.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {heatmap.map((q, i) => {
+                      const fr = q.failure_rate ?? 0;
+                      const color = fr > 60 ? "#ef4444" : fr > 35 ? "#f59e0b" : "#10b981";
+                      return (
+                        <div key={q.question_id ?? i} className="flex items-center gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-700 truncate">{q.question_text ?? "â€”"}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">{q.lesson_title ?? ""} Â· b={q.difficulty_b ?? 0}</p>
+                            <div className="mt-1.5 w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full" style={{ width: `${fr}%`, backgroundColor: color }} />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 w-16">
+                            <p className="text-base font-black" style={{ color }}>{fr}%</p>
+                            <p className="text-[10px] text-slate-400">{q.total_attempts ?? 0} essais</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ===== RECOMMANDATIONS ===== */}
+            {activeNav === "reco" && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <h2 className="flex items-center gap-2 text-sm font-black text-slate-800 mb-5">
+                  <AlertTriangle size={16} className="text-slate-400" />
+                  Recommandations ({recommendations.length})
+                </h2>
+                {recommendations.length === 0 ? (
+                  <div className="text-center py-12">
+                    <CheckCircle size={40} className="mx-auto text-emerald-400 mb-3" />
+                    <p className="text-sm text-slate-400 font-medium">Aucune alerte. Tout va bien.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {recommendations.map((r, i) => (
+                      <div key={i} className="p-4 bg-slate-50 rounded-xl">
+                        <p className="text-sm font-bold text-slate-800">{r.lesson_title ?? "â€”"}</p>
+                        <p className="text-xs text-slate-500 mt-1">{r.recommendation ?? ""}</p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                            <div className="h-full rounded-full bg-red-400" style={{ width: `${r.failure_rate ?? 0}%` }} />
+                          </div>
+                          <span className="text-xs font-black text-red-400 shrink-0">{r.failure_rate ?? 0}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ===== PROGRESSION ===== */}
+            {activeNav === "progression" && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-6">
+                <h2 className="flex items-center gap-2 text-sm font-black text-slate-800 mb-5">
+                  <Activity size={16} className="text-slate-400" />
+                  Progression (14 jours)
+                </h2>
+                {progression.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400">
+                    <Activity size={40} className="mx-auto opacity-20 mb-3" />
+                    <p className="text-sm font-medium">Pas encore de donnÃ©es.</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-end gap-1.5 h-48 mb-2">
+                      {progression.map((p, i) => (
+                        <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+                          <div className="absolute -top-7 bg-slate-800 text-white text-[10px] px-1.5 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
+                            Î¸={p.avg_theta} Â· {p.attempts}Q
+                          </div>
+                          <div
+                            className="w-full rounded-t transition-all duration-500"
+                            style={{
+                              height: `${Math.max(6, ((p.attempts ?? 0) / maxAttempts) * 100)}%`,
+                              backgroundColor: thetaColor(p.avg_theta ?? 0),
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-1.5">
+                      {progression.map((p, i) => (
+                        <div key={i} className="flex-1 text-center">
+                          <p className="text-[10px] text-slate-400 truncate">
+                            {new Date(p.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between text-sm text-slate-500">
+                      <span>DÃ©but : Î¸ = {progression[0]?.avg_theta ?? 0}</span>
+                      <span>Maintenant : Î¸ = {progression[progression.length - 1]?.avg_theta ?? 0}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </main>
+
+      {/* MODAL CONFIRMATION SUPPRESSION */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="flex items-center gap-3 mb-4 text-red-500">
+              <div className="bg-red-50 p-2 rounded-xl"><AlertOctagon size={20} /></div>
+              <h3 className="font-black text-sm text-slate-800">Supprimer l'Ã©tudiant</h3>
+            </div>
+            <p className="text-sm text-slate-600 mb-6">
+              Es-tu sÃ»r de vouloir supprimer <span className="font-bold">{deleteConfirm.name}</span> ?
+              Toutes ses tentatives seront Ã©galement supprimÃ©es. Cette action est irrÃ©versible.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteConfirm(null)}
+                className="flex-1 p-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-slate-200 transition-colors">
+                Annuler
+              </button>
+              <button onClick={() => confirmDelete(deleteConfirm.id)} disabled={deletingId === deleteConfirm.id}
+                className="flex-1 p-2.5 bg-red-500 text-white rounded-xl text-sm font-bold hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                {deletingId === deleteConfirm.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### frontend\tailwind.config.ts
+```
+import type { Config } from "tailwindcss";
+
+const config: Config = {
+  content: [
+    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+  ],
+  theme: {
+    extend: {
+      backgroundImage: {
+        "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
+        "gradient-conic":
+          "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
+      },
+    },
+  },
+  plugins: [
+    require('@tailwindcss/typography'), // C'est cette ligne qui rend tes cours beaux
+  ],
+};
+export default config;
+```
+
+### frontend\tsconfig.json
+```
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+
+```
+
+### README.md
+```
+```

@@ -10,7 +10,9 @@ export default function Home() {
     if (!token) { router.push("/login"); return; }
 
     const role = localStorage.getItem("userRole");
-    if (role === "TEACHER" || role === "ADMIN") {
+    if (role === "ADMIN") {
+      router.push("/admin");
+    } else if (role === "TEACHER") {
       router.push("/teacher");
     } else {
       router.push("/student");

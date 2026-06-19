@@ -15,6 +15,9 @@ from .services import ai_service, quiz_service, chat_service
 from .core import security
 from .core.dependencies import get_db, get_current_user, require_role
 from .routers import teacher
+from .routers import admin
+from typing import Optional
+
 
 # --- APP ---
 limiter = Limiter(key_func=get_remote_address)
@@ -33,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(teacher.router)
+app.include_router(admin.router) 
 
 # --- SCHÉMAS ---
 class CourseRequest(BaseModel):
@@ -64,8 +68,9 @@ class ChatRequestWithMode(BaseModel):
     lesson_id: str
     question: str
     session_id: str
-    mode: str = "normal"  # normal | summary | step_by_step | quiz_express
- 
+    mode: str = "normal"
+    pdf_base64: Optional[str] = None
+    pdf_name: Optional[str] = None
 class ReformulateRequest(BaseModel):
     lesson_id: str
 # --- AUTH (public) ---
@@ -197,12 +202,14 @@ def chat_with_course(
     ).order_by(
         models.LessonChunk.embedding.l2_distance(question_vector)
     ).limit(3).all()
- 
+
     answer = chat_service.chat_with_memory(
         session_id=body.session_id,
         question=body.question,
         context_chunks=results,
-        mode=body.mode
+        mode=body.mode,
+        pdf_base64=body.pdf_base64,
+        pdf_name=body.pdf_name,
     )
     return {"answer": answer, "mode": body.mode}
 
