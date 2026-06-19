@@ -11,8 +11,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 
-const API = "${process.env.NEXT_PUBLIC_API_URL}";
-
+const API = process.env.NEXT_PUBLIC_API_URL;
 type ChatMode = "normal" | "summary" | "step_by_step" | "quiz_express";
 
 const MODES: { id: ChatMode; label: string; icon: any; accent: string }[] = [
