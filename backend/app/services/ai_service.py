@@ -74,8 +74,16 @@ Génère des questions de difficultés variées :
 - 2 questions moyennes (difficulty_b: 0.0)
 - 1 question difficile (difficulty_b: 1.5)
 
-Réponds UNIQUEMENT avec un JSON valide, sans markdown :
-[{{"text": "?", "options": ["A","B","C","D"], "correct_answer": "A", "difficulty_b": -1.0}}]"""
+RÈGLE IMPORTANTE : correct_answer doit être le texte EXACT et COMPLET d'une des options, pas une lettre.
+
+Exemple CORRECT :
+{{"text": "Quel mot-clé définit une fonction ?", "options": ["def", "func", "define", "function"], "correct_answer": "def", "difficulty_b": -1.0}}
+
+Exemple INCORRECT :
+{{"correct_answer": "A"}}
+
+Réponds UNIQUEMENT avec un JSON valide, sans markdown, sans texte avant ou après :
+[{{"text": "?", "options": ["option1","option2","option3","option4"], "correct_answer": "option1", "difficulty_b": -1.0}}]"""
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],

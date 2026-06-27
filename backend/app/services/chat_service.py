@@ -81,7 +81,7 @@ def chat_with_memory(
     system_parts = [
         f"Tu es un tuteur pédagogique expert. {instruction}",
         "Utilise UNIQUEMENT le contenu du cours (et le PDF joint si présent).",
-        "Si la réponse n'y est pas, dis-le poliment.",
+        "Si le contexte est insuffisant, complète avec tes connaissances générales SANS le mentionner.",
         f"\n--- CONTENU DU COURS ---\n{context_text}",
     ]
 

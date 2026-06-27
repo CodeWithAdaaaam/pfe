@@ -8,7 +8,13 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import io
-
+import re
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.lib.enums import TA_LEFT
 from .database.session import SessionLocal, init_db
 from .database import models
 from .services import ai_service, quiz_service, chat_service
@@ -29,14 +35,15 @@ init_db()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000","https://pfe-phi-two.vercel.app"],
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 app.include_router(teacher.router)
-app.include_router(admin.router) 
+app.include_router(admin.router)
 
 # --- SCHÉMAS ---
 class CourseRequest(BaseModel):
@@ -46,7 +53,8 @@ class CourseRequest(BaseModel):
 class ChatRequest(BaseModel):
     lesson_id: str
     question: str
-    session_id: str
+    session_id: Optional[str] = "default_session"
+    mode: str = "normal"
 
 class UserSignup(BaseModel):
     email: str
@@ -60,10 +68,11 @@ class UserLogin(BaseModel):
 class QuizSubmit(BaseModel):
     question_id: str
     answer: str
+
 class OpenQuestionSubmit(BaseModel):
     question_id: str
-    answer: str  # réponse ouverte de l'étudiant
- 
+    answer: str
+
 class ChatRequestWithMode(BaseModel):
     lesson_id: str
     question: str
@@ -71,8 +80,10 @@ class ChatRequestWithMode(BaseModel):
     mode: str = "normal"
     pdf_base64: Optional[str] = None
     pdf_name: Optional[str] = None
+
 class ReformulateRequest(BaseModel):
     lesson_id: str
+
 # --- AUTH (public) ---
 
 @app.post("/auth/signup")
@@ -138,7 +149,7 @@ def create_course(
         return {"status": "success", "lesson_id": str(new_lesson.id)}
     except Exception as e:
         import traceback
-        traceback.print_exc()  # ← ajoute cette ligne
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/lessons")
@@ -169,22 +180,119 @@ def export_lesson_pdf(
     lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
     if not lesson:
         raise HTTPException(status_code=404, detail="Leçon non trouvée")
+
     buffer = io.BytesIO()
-    p = canvas.Canvas(buffer)
-    p.setFont("Helvetica-Bold", 16)
-    p.drawString(100, 800, f"Cours : {lesson.title}")
-    p.setFont("Helvetica", 12)
-    y = 750
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=2*cm, leftMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CourseTitle',
+        fontSize=22, fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#4338ca'),
+        spaceAfter=12
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseH1', fontSize=16, fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#1e1b4b'),
+        spaceBefore=16, spaceAfter=6
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseH2', fontSize=13, fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#3730a3'),
+        spaceBefore=12, spaceAfter=4
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseH3', fontSize=11, fontName='Helvetica-Bold',
+        textColor=colors.HexColor('#4f46e5'),
+        spaceBefore=8, spaceAfter=4
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseBody', fontSize=10, fontName='Helvetica',
+        leading=16, spaceAfter=6
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseBullet', fontSize=10, fontName='Helvetica',
+        leading=16, leftIndent=20, spaceAfter=3,
+        bulletIndent=10
+    ))
+    styles.add(ParagraphStyle(
+        name='CourseCode', fontSize=9, fontName='Courier',
+        backColor=colors.HexColor('#f1f5f9'),
+        textColor=colors.HexColor('#1e293b'),
+        leftIndent=12, rightIndent=12,
+        spaceBefore=4, spaceAfter=4, leading=14
+    ))
+
+    story = []
+
+    story.append(Paragraph(lesson.title, styles['CourseTitle']))
+    story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor('#4338ca')))
+    story.append(Spacer(1, 0.4*cm))
+
+    in_code_block = False
+    code_lines = []
+
+    def flush_code():
+        if code_lines:
+            for cl in code_lines:
+                safe = cl.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                story.append(Paragraph(safe or ' ', styles['CourseCode']))
+            story.append(Spacer(1, 0.2*cm))
+            code_lines.clear()
+
     for line in lesson.content.split('\n'):
-        p.drawString(100, y, line[:80])
-        y -= 20
-        if y < 50:
-            p.showPage()
-            y = 800
-    p.save()
+        if line.startswith('```'):
+            if in_code_block:
+                flush_code()
+                in_code_block = False
+            else:
+                in_code_block = True
+            continue
+
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        if line.startswith('### '):
+            story.append(Paragraph(line[4:], styles['CourseH3']))
+        elif line.startswith('## '):
+            story.append(Paragraph(line[3:], styles['CourseH2']))
+        elif line.startswith('# '):
+            story.append(Paragraph(line[2:], styles['CourseH1']))
+        elif re.match(r'^[-*•]\s+', line):
+            text = re.sub(r'^[-*•]\s+', '', line)
+            text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+            story.append(Paragraph(f'• {text}', styles['CourseBullet']))
+        elif re.match(r'^\d+\.\s+', line):
+            text = re.sub(r'^\d+\.\s+', '', line)
+            num = re.match(r'^(\d+)\.', line).group(1)
+            text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+            story.append(Paragraph(f'{num}. {text}', styles['CourseBullet']))
+        elif line.strip() in ('---', '***', '___'):
+            story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#cbd5e1')))
+            story.append(Spacer(1, 0.2*cm))
+        elif line.strip() == '':
+            story.append(Spacer(1, 0.2*cm))
+        else:
+            text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+            text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+            text = re.sub(r'`(.*?)`', r'<font name="Courier">\1</font>', text)
+            story.append(Paragraph(text, styles['CourseBody']))
+
+    flush_code()
+
+    doc.build(story)
     buffer.seek(0)
-    return StreamingResponse(buffer, media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={lesson.title}.pdf"})
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={lesson.title}.pdf"}
+    )
 
 # --- CHATBOT ---
 
@@ -226,11 +334,13 @@ def clear_chat_session(
 @app.get("/quiz/next/{lesson_id}")
 def get_next_question(
     lesson_id: str,
+    asked: Optional[str] = None,  # "id1,id2,id3"
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    asked_ids = set(asked.split(",")) if asked else set()
     questions = db.query(models.Question).filter(models.Question.lesson_id == lesson_id).all()
-    next_q = quiz_service.select_next_question(questions, current_user.ability_theta)
+    next_q = quiz_service.select_next_question(questions, current_user.ability_theta, asked_ids)
     if not next_q:
         raise HTTPException(status_code=404, detail="Plus de questions disponibles")
     return {"id": str(next_q.id), "text": next_q.text, "options": next_q.options, "difficulty_b": next_q.difficulty_b}
@@ -269,21 +379,19 @@ def submit_open_answer(
     question = db.query(models.Question).filter(models.Question.id == data.question_id).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question introuvable")
- 
-    # Récupérer le contenu du cours pour contexte
+
     lesson = db.query(models.Lesson).filter(models.Lesson.id == question.lesson_id).first()
     context = lesson.content if lesson else ""
- 
+
     result = ai_service.correct_open_question(question.text, data.answer, context)
- 
-    # Mise à jour IRT basée sur le score
+
     is_correct = result.get("is_correct", False)
     current_user.ability_theta = quiz_service.update_student_theta(
         current_user.ability_theta, question.difficulty_b, is_correct
     )
     db.add(models.Attempt(user_id=current_user.id, question_id=question.id, is_correct=is_correct))
     db.commit()
- 
+
     return {
         "score": result.get("score", 0),
         "is_correct": is_correct,
@@ -321,4 +429,3 @@ def reformulate_lesson(
         raise HTTPException(status_code=404, detail="Leçon non trouvée")
     reformulated = ai_service.reformulate_for_level(lesson.content, current_user.ability_theta)
     return {"content": reformulated, "theta_used": current_user.ability_theta}
- 

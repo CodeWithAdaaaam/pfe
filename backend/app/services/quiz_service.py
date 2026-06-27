@@ -17,10 +17,10 @@ def update_student_theta(current_theta: float, question_difficulty: float, is_co
     
     return round(new_theta, 2)
 
-def select_next_question(questions: list, student_theta: float):
-    """
-    Choisit la question dont la difficulté est la plus proche du niveau de l'élève.
-    """
-    if not questions: return None
-    # On trie par la distance absolue entre theta et la difficulté b
-    return min(questions, key=lambda q: abs(q.difficulty_b - student_theta))
+def select_next_question(questions: list, student_theta: float, asked_ids: set = None):
+    if asked_ids is None:
+        asked_ids = set()
+    remaining = [q for q in questions if str(q.id) not in asked_ids]
+    if not remaining:
+        return None
+    return min(remaining, key=lambda q: abs(q.difficulty_b - student_theta))
